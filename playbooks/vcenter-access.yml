@@ -1,0 +1,82 @@
+---
+# Create/converge ONLY the vCenter access needed by this project (run as the SSO admin):
+#   - SSO users  svc-<cluster>-prov (OpenTofu node provisioning) and svc-<cluster>-csi (CPI/CSI)
+#   - roles      <cluster>-provisioner, <cluster>-placement, <cluster>-csi
+#   - the VM folder the provisioner is confined to, and every permission (see docs/vcenter-user-profiles.md)
+# then read the permissions back from vCenter and print them.
+#
+#   docker compose run --rm toolbox ansible-playbook playbooks/vcenter-access.yml --ask-vault-pass
+#   ... -e sso_reset_passwords=true   push the vault passwords to existing accounts (rotation/expiry)
+#   ... --tags verify                 only print what is currently granted
+#
+# Same tasks as stage 1 (roles/vcenter_bootstrap); this playbook skips the template and storage policy.
+- name: vCenter users, roles and permissions for vsphere-rke
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: SSO service accounts
+      ansible.builtin.import_role:
+        name: vcenter_bootstrap
+        tasks_from: users.yml
+      tags: [users]
+
+    - name: Least-privilege roles
+      ansible.builtin.import_role:
+        name: vcenter_bootstrap
+        tasks_from: roles.yml
+      tags: [roles]
+
+    - name: VM folder (scope of the provisioner and CSI accounts)
+      ansible.builtin.import_role:
+        name: vcenter_bootstrap
+        tasks_from: folder.yml
+      tags: [folder]
+
+    - name: Resolve the CSI datastore(s)
+      ansible.builtin.import_role:
+        name: vcenter_bootstrap
+        tasks_from: datastores.yml
+      tags: [always]
+
+    - name: Permissions
+      ansible.builtin.import_role:
+        name: vcenter_bootstrap
+        tasks_from: permissions.yml
+      tags: [permissions]
+
+    - name: Read the permissions back from vCenter
+      community.vmware.vmware_object_role_permission_info:
+        hostname: "{{ vcenter_hostname }}"
+        username: "{{ vcenter_admin_username }}"
+        password: "{{ vcenter_admin_password }}"
+        validate_certs: "{{ vcenter_validate_certs }}"
+        principal: "{{ item.principal }}"
+        object_type: "{{ item.object_type }}"
+        object_name: "{{ item.object_name }}"
+      loop: "{{ vcenter_permissions }}"
+      loop_control:
+        label: "{{ item.principal }} @ {{ item.object_type }}:{{ item.object_name }}"
+      register: granted
+      tags: [verify]
+
+    # The info module returns the principal's *effective* privileges on the object;
+    # check that every privilege of the expected role is in effect there.
+    - name: Effective privileges (expected role -> in effect in vCenter)
+      vars:
+        expected: "{{ role_privileges[item.item.role] }}"
+        effective: "{{ item.permission_info | map(attribute='privileges') | flatten | unique }}"
+        missing: "{{ expected | difference(effective) }}"
+      ansible.builtin.assert:
+        that: missing | length == 0
+        success_msg: >-
+          OK {{ item.item.principal | regex_replace('^.*\\\\', '') }} has {{ item.item.role }}
+          ({{ expected | length }} privileges) on {{ item.item.object_type }}:{{ item.item.object_name }}
+        fail_msg: >-
+          MISSING on {{ item.item.object_type }}:{{ item.item.object_name }} for {{ item.item.principal }}: {{ missing }}
+      loop: "{{ granted.results }}"
+      loop_control:
+        label: "{{ item.item.principal | regex_replace('^.*\\\\', '') }} {{ item.item.role }} @ {{ item.item.object_name }}"
+      tags: [verify]
+  vars:
+    role_privileges: "{{ {prov_role: prov_role_privileges, placement_role: placement_role_privileges,
+                          csi_role: csi_role_privileges, 'ReadOnly': ['System.Read']} }}"

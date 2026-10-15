@@ -20,8 +20,9 @@ The jump box only needs Docker.
 - Two SSO service accounts: `svc-<cluster>-prov`, used by OpenTofu only, and `svc-<cluster>-csi`, used by the
   in-cluster CPI/CSI only.
 - Three least-privilege roles: `<cluster>-provisioner`, `<cluster>-placement` and `<cluster>-csi`, granted only
-  on the objects they need. The matrix is in
-  [.claude/skills/vsphere-rke/references/privileges.md](.claude/skills/vsphere-rke/references/privileges.md).
+  on the objects they need. The minimum profiles are in
+  [docs/vcenter-user-profiles.md](docs/vcenter-user-profiles.md), and `playbooks/vcenter-access.yml` creates
+  and verifies them on their own.
 - The VM folder `<cluster>`.
 - The tag category `<cluster>-k8s-storage` and tag `<cluster>-csi-datastore`, attached to the CSI datastore.
 - The tag-based storage policy `<cluster>-csi-policy`.
@@ -75,6 +76,7 @@ For unattended runs, put the vault password in `.state/vault-pass` (mode 600) an
 | `playbooks/03-rke2.yml` | apt upgrade, multipath blacklist, RKE2 | — |
 | `playbooks/04-vsphere-csi.yml` | CPI, CSI, StorageClass | `-e csi_smoke_test=true` (PVC + pod round trip) |
 | `playbooks/site.yml` | 01 → 04 | — |
+| `playbooks/vcenter-access.yml` | only the SSO users, roles, folder and permissions, then reads the effective privileges back | `--tags verify`; `-e sso_reset_passwords=true` |
 | `playbooks/99-destroy.yml` | `tofu destroy` of the nodes | `-e destroy_volumes=true`, `-e destroy_bootstrap=true` |
 
 Every stage is idempotent, so re-running it is safe and is the normal way to converge.
@@ -115,8 +117,11 @@ static_ip_offset: 20        # nodes get 192.0.2.20, .21, ... (control plane firs
   `01-vcenter-bootstrap.yml --tags storage_policy`. If the category still doesn't show up in
   `.claude/skills/vsphere-rke/scripts/spbm_tag_categories.py`, SPBM's tag sync is broken on the vCenter: check
   `/var/log/vmware/vmware-sps/sps.log` on the VCSA.
-- **`Permission to perform this operation was denied`** in stage 2: re-run with `-e tofu_debug=true` and look up the
-  missing privilege as described in `privileges.md`. Then delete `.state/vsphere-debug`.
+- **`Permission to perform this operation was denied`** in stage 2: first run
+  `playbooks/vcenter-access.yml --tags verify`. If every grant is present, re-run stage 2 with
+  `-e tofu_debug=true` and find the privilege as described in
+  [.claude/skills/vsphere-rke/references/privileges.md](.claude/skills/vsphere-rke/references/privileges.md).
+  Then delete `.state/vsphere-debug`.
 - **Node names/IPs don't match** (node_prep stops with "node IPs changed"): DHCP moved addresses between VMs.
   Re-run `02-nodes.yml` to refresh the inventory, and use DHCP reservations or `network_mode: static`.
 - **CPI: "region category ... does not match any tags"**: zone labels are configured but the hosts/VMs aren't

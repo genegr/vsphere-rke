@@ -11,6 +11,12 @@
   ansible.builtin.import_tasks: folder.yml
   tags: [folder]
 
+# Cheap lookup needed by both storage_policy and permissions: always run it, so
+# neither --tags nor --skip-tags can leave csi_datastore_list unresolved.
+- name: CSI datastore(s)
+  ansible.builtin.import_tasks: datastores.yml
+  tags: [always]
+
 - name: Storage policy
   ansible.builtin.import_tasks: storage_policy.yml
   tags: [storage_policy]

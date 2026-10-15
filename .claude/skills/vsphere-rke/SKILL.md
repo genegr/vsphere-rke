@@ -56,8 +56,9 @@ anything touching shared vCenter objects without the `{{ cluster_name }}` prefix
 <prefix> ansible-playbook playbooks/02-nodes.yml -e tofu_debug=true -e control_plane_count=1 -e worker_count=0
 ssh <jumpbox> 'cd ~/vsphere-rke && grep -rhoE "<privilegeId>[^<]+</privilegeId>" .state/vsphere-debug | sort | uniq -c; rm -rf .state/vsphere-debug'
 ```
-Add the privilege to `roles/vcenter_bootstrap/defaults/main.yml`, run `01-vcenter-bootstrap.yml --tags roles`,
-and document it in `references/privileges.md`. Repeat until the run succeeds.
+First rule out a missing grant with `playbooks/vcenter-access.yml --tags verify`. Then add the privilege to
+`roles/vcenter_bootstrap/defaults/main.yml` and run `playbooks/vcenter-access.yml`. Document it in
+`docs/vcenter-user-profiles.md` and `references/privileges.md`. Repeat until the run succeeds.
 
 **Storage policy "Unrecognized capability … storage/tag".** SPBM hasn't synced the tag category. Run the SPBM probe.
 If the category is missing, ask the user before restarting vCenter services through
@@ -121,4 +122,5 @@ and `kubectl get csinodes`. Use the smoke test: `04-vsphere-csi.yml -e csi_smoke
   outside stage 1.
 
 ## References
-- `references/privileges.md`: the role → privilege → object matrix, with the reason for each entry.
+- `docs/vcenter-user-profiles.md`: the minimum vCenter profiles (role → privilege → object), human-facing.
+- `references/privileges.md`: why each non-obvious privilege exists, and how to find a missing one.

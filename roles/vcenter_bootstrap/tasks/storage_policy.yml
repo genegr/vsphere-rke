@@ -1,32 +1,7 @@
 ---
 # Tag-based SPBM policy consumed by the vSphere CSI StorageClass.
-# csi_datastore may be a single datastore or a datastore cluster (all members get tagged).
-- name: Resolve the CSI datastore MoID (datastore vs datastore cluster)
-  ansible.builtin.set_fact:
-    csi_datastore_moid: >-
-      {{ lookup('vmware.vmware.moid_from_path',
-                '/' ~ vsphere_datacenter ~ '/datastore/' ~ csi_datastore,
-                **vcenter_admin_lookup_args) }}
-
-- name: Gather datastore membership (datastore cluster only)
-  community.vmware.vmware_datastore_info:
-    hostname: "{{ vcenter_hostname }}"
-    username: "{{ vcenter_admin_username }}"
-    password: "{{ vcenter_admin_password }}"
-    validate_certs: "{{ vcenter_validate_certs }}"
-    datacenter_name: "{{ vsphere_datacenter }}"
-  register: datastore_info
-  when: csi_datastore_moid.startswith('group-p')
-
-- name: Build the list of datastores to tag
-  ansible.builtin.set_fact:
-    csi_datastore_list: >-
-      {{ [csi_datastore] if not csi_datastore_moid.startswith('group-p')
-         else datastore_info.datastores
-              | selectattr('datastore_cluster', 'defined')
-              | selectattr('datastore_cluster', 'equalto', csi_datastore)
-              | map(attribute='name') | list }}
-
+# Needs csi_datastore_moid / csi_datastore_list from datastores.yml (all members of a
+# datastore cluster get tagged).
 - name: Ensure the storage tag category exists
   vmware.vmware.tag_categories:
     hostname: "{{ vcenter_hostname }}"

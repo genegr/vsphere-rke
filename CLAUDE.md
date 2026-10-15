@@ -13,8 +13,9 @@ Human docs: `README.md`.
   - `library/vm_vapp_config.py`, a custom module, because no module removes vApp config.
 - **Least privilege.** Stage 1 is the only place that uses the SSO admin. Stage 2 authenticates as the
   provisioner and stage 4 as the CSI account. When something fails with NoPermission, add the *specific*
-  privilege to `roles/vcenter_bootstrap/defaults/main.yml` and record why in
-  `.claude/skills/vsphere-rke/references/privileges.md`. Never add `VirtualMachine.*` to a role granted on
+  privilege to `roles/vcenter_bootstrap/defaults/main.yml`. Update `docs/vcenter-user-profiles.md` (the
+  human-facing matrix) and record why in `.claude/skills/vsphere-rke/references/privileges.md`. Then run
+  `playbooks/vcenter-access.yml` to apply and verify. Never add `VirtualMachine.*` to a role granted on
   the cluster with propagation, because VMs inherit through resource pools.
 - **Secrets never on a command line.** `community.general.terraform` echoes the full `-var` list on failure, so
   pass secrets as `TF_VAR_*` through `environment:`. Use `no_log: true` on tasks that carry passwords.
@@ -32,7 +33,10 @@ inventory/nodes.generated.yml    written by tofu (local_file) — node name -> I
 inventory/group_vars/all/        main.yml (ALL settings), vault.yml (encrypted secrets)
 inventory/group_vars/k8s_cluster.yml   lablabs.rke2 settings
 playbooks/01..04, site.yml, 99-destroy.yml
-roles/vcenter_bootstrap          users, roles (privilege lists in defaults), folder, storage policy, permissions, template
+playbooks/vcenter-access.yml     users + roles + folder + permissions only, then verifies effective privileges
+playbooks/tools/govc.yml         govc with vault credentials (admin/prov/csi)
+docs/vcenter-user-profiles.md    minimum vCenter profiles (human-facing matrix)
+roles/vcenter_bootstrap          users, roles (privilege lists in defaults), folder, datastores, storage policy, permissions, template
 roles/nodes                      ssh keypair + tofu apply/destroy + inventory refresh
 roles/node_prep                  identity check, apt upgrade, multipath blacklist, reboot
 roles/vsphere_cpi_csi            CPI (helm) + CSI (manifest) + StorageClass + smoke test
