@@ -1,0 +1,49 @@
+---
+# Set -e sso_reset_passwords=true to push the vault passwords to existing SSO accounts
+# (e.g. after rotation or SSO password expiry).
+sso_reset_passwords: false
+# Set -e force_template=true to delete and rebuild the template (existing nodes are unaffected).
+force_template: false
+
+# Least-privilege role definitions. Keep these lists minimal: extend only when a
+# stage fails with NoPermission, and record why in .claude/skills/vsphere-rke/references/privileges.md
+
+# OpenTofu: clone node VMs from the template, reconfigure, power-cycle, delete.
+# Granted on the cluster VM folder (propagating), the datastore and the network only.
+prov_role_privileges:
+  - Datastore.AllocateSpace
+  - Datastore.Browse
+  - Datastore.FileManagement
+  - Network.Assign
+  - VirtualMachine.Config.AddNewDisk
+  - VirtualMachine.Config.AddRemoveDevice
+  - VirtualMachine.Config.AdvancedConfig
+  - VirtualMachine.Config.Annotation
+  - VirtualMachine.Config.CPUCount
+  - VirtualMachine.Config.DiskExtend
+  - VirtualMachine.Config.EditDevice
+  - VirtualMachine.Config.Memory
+  - VirtualMachine.Config.Rename          # provider re-sends the VM name in its post-clone reconfigure
+  - VirtualMachine.Config.Resource
+  - VirtualMachine.Config.Settings
+  - VirtualMachine.Config.UpgradeVirtualHardware
+  - VirtualMachine.Interact.PowerOff
+  - VirtualMachine.Interact.PowerOn
+  - VirtualMachine.Interact.Reset
+  - VirtualMachine.Inventory.Create
+  - VirtualMachine.Inventory.CreateFromExisting
+  - VirtualMachine.Inventory.Delete
+  - VirtualMachine.Provisioning.DeployTemplate
+
+# Placement only. Granted on the compute cluster / resource pool with propagation, so it must
+# never contain VirtualMachine.* privileges (they would apply to every VM in the cluster).
+placement_role_privileges:
+  - Resource.AssignVMToPool
+
+# vSphere CSI (CNS) + CPI, per the vSphere CSI driver docs (vanilla, block volumes).
+csi_role_privileges:
+  - Cns.Searchable
+  - StorageProfile.View
+  - Datastore.FileManagement
+  - VirtualMachine.Config.AddExistingDisk
+  - VirtualMachine.Config.AddRemoveDevice

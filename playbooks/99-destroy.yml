@@ -1,0 +1,136 @@
+---
+# Teardown. Default: delete the node VMs (OpenTofu destroy, provisioner account).
+#   -e destroy_volumes=true    delete every PVC on the vSphere StorageClass first
+#                              (CSI volumes are First Class Disks and survive VM deletion)
+#   -e destroy_bootstrap=true  also remove template, storage policy, tag, roles, folder, SSO users
+- name: Delete CSI volumes
+  hosts: localhost
+  gather_facts: false
+  tags: [destroy]
+  module_defaults:
+    group/kubernetes.core.k8s:
+      kubeconfig: "{{ state_dir }}/kubeconfig"
+  tasks:
+    - name: Find PVCs on the vSphere StorageClass
+      kubernetes.core.k8s_info:
+        kind: PersistentVolumeClaim
+      register: all_pvcs
+      when: destroy_volumes | default(false) | bool
+
+    - name: Delete those PVCs
+      kubernetes.core.k8s:
+        state: absent
+        kind: PersistentVolumeClaim
+        name: "{{ item.metadata.name }}"
+        namespace: "{{ item.metadata.namespace }}"
+        wait: true
+      loop: "{{ all_pvcs.resources | default([]) | selectattr('spec.storageClassName', 'defined')
+                | selectattr('spec.storageClassName', 'equalto', storageclass_name) | list }}"
+      loop_control:
+        label: "{{ item.metadata.namespace }}/{{ item.metadata.name }}"
+      when: destroy_volumes | default(false) | bool
+
+    - name: Wait until the CSI driver has released every PV of the class
+      kubernetes.core.k8s_info:
+        kind: PersistentVolume
+      register: remaining_pvs
+      until: remaining_pvs.resources | selectattr('spec.storageClassName', 'defined')
+             | selectattr('spec.storageClassName', 'equalto', storageclass_name) | list | length == 0
+      retries: 30
+      delay: 10
+      when: destroy_volumes | default(false) | bool
+
+- name: Destroy node VMs
+  hosts: localhost
+  gather_facts: false
+  tags: [destroy]
+  roles:
+    - role: nodes
+      vars:
+        nodes_state: absent
+
+- name: Remove vCenter bootstrap objects
+  hosts: localhost
+  gather_facts: false
+  tags: [destroy]
+  vars:
+    vc_auth: &vc_auth
+      hostname: "{{ vcenter_hostname }}"
+      username: "{{ vcenter_admin_username }}"
+      password: "{{ vcenter_admin_password }}"
+      validate_certs: "{{ vcenter_validate_certs }}"
+  tasks:
+    - name: Remove bootstrap objects
+      when: destroy_bootstrap | default(false) | bool
+      block:
+        - name: Delete the template
+          community.vmware.vmware_guest:
+            <<: *vc_auth
+            datacenter: "{{ vsphere_datacenter }}"
+            folder: "/{{ vsphere_datacenter }}/vm/{{ vm_folder }}"
+            name: "{{ template_name }}"
+            state: absent
+
+        - name: Delete the storage policy
+          community.vmware.vmware_vm_storage_policy:
+            <<: *vc_auth
+            name: "{{ storage_policy_name }}"
+            state: absent
+
+        - name: Delete the storage tag (detaches it from the datastores)
+          vmware.vmware.tags:
+            <<: *vc_auth
+            state: absent
+            tags:
+              - name: "{{ storage_tag_name }}"
+                category_name: "{{ storage_tag_category }}"
+
+        - name: Delete the storage tag category
+          vmware.vmware.tag_categories:
+            <<: *vc_auth
+            state: absent
+            tag_categories:
+              - name: "{{ storage_tag_category }}"
+
+        - name: Delete the roles (and every permission that uses them)
+          community.vmware.vmware_local_role_manager:
+            <<: *vc_auth
+            local_role_name: "{{ item }}"
+            state: absent
+            force_remove: true
+          loop: ["{{ prov_role }}", "{{ placement_role }}", "{{ csi_role }}"]
+
+        - name: Delete the VM folder (must be empty)
+          vmware.vmware.folder:
+            <<: *vc_auth
+            datacenter: "{{ vsphere_datacenter }}"
+            relative_path: "{{ vm_folder }}"
+            folder_type: vm
+            state: absent
+
+        # Permissions using the built-in ReadOnly role are not removed with the custom roles.
+        - name: Delete the ReadOnly permissions of the service accounts
+          community.vmware.vmware_object_role_permission:
+            <<: *vc_auth
+            principal: "{{ sso_domain | upper }}\\{{ item.user }}"
+            role: ReadOnly
+            object_type: "{{ item.type }}"
+            object_name: "{{ item.name }}"
+            state: absent
+          loop:
+            - { user: "{{ prov_user }}", type: Datacenter, name: "{{ vsphere_datacenter }}" }
+            - { user: "{{ csi_user }}", type: Datacenter, name: "{{ vsphere_datacenter }}" }
+            - { user: "{{ csi_user }}", type: ClusterComputeResource, name: "{{ vsphere_cluster }}" }
+
+        - name: Delete the SSO service accounts
+          ansible.builtin.command:
+            argv: [govc, sso.user.rm, "{{ item }}"]
+          environment:
+            GOVC_URL: "https://{{ vcenter_hostname }}"
+            GOVC_USERNAME: "{{ vcenter_admin_username }}"
+            GOVC_PASSWORD: "{{ vcenter_admin_password }}"
+            GOVC_INSECURE: "{{ (not vcenter_validate_certs) | ternary('1', '0') }}"
+          loop: ["{{ prov_user }}", "{{ csi_user }}"]
+          register: sso_rm
+          changed_when: sso_rm.rc == 0
+          failed_when: sso_rm.rc != 0 and 'not found' not in sso_rm.stderr

@@ -1,0 +1,159 @@
+---
+# All calls run from the toolbox (localhost) against .state/kubeconfig.
+# vCenter credentials used in-cluster are the CSI service account only.
+
+# --- vSphere CPI ----------------------------------------------------------------
+- name: Create the CPI credentials secret
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: vsphere-cloud-secret
+        namespace: kube-system
+      type: Opaque
+      stringData: "{{ {vcenter_hostname ~ '.username': csi_principal_upn, vcenter_hostname ~ '.password': csi_password} }}"
+  no_log: true
+
+- name: Install the vSphere CPI chart
+  kubernetes.core.helm:
+    name: vsphere-cpi
+    chart_repo_url: https://kubernetes.github.io/cloud-provider-vsphere
+    chart_ref: vsphere-cpi
+    chart_version: "{{ cpi_chart_version }}"
+    release_namespace: kube-system
+    wait: true
+    values:
+      config:
+        enabled: true
+        vcenter: "{{ vcenter_hostname }}"
+        datacenter: "{{ vsphere_datacenter }}"
+        username: ""
+        password: ""
+        # The chart always renders zone labels; empty values disable zone lookup
+        # (otherwise CPI refuses to initialise nodes whose host/VM lacks those tags).
+        region: "{{ cpi_region_tag_category }}"
+        zone: "{{ cpi_zone_tag_category }}"
+        secret:
+          create: false
+          name: vsphere-cloud-secret
+
+- name: Wait until the CPI has initialised every node (providerID set)
+  kubernetes.core.k8s_info:
+    kind: Node
+  register: cpi_nodes
+  until: >-
+    cpi_nodes.resources | length == groups['k8s_cluster'] | length and
+    cpi_nodes.resources | map(attribute='spec.providerID', default='') | select('match', '^vsphere://') | list | length
+      == groups['k8s_cluster'] | length
+  retries: 30
+  delay: 10
+
+# --- vSphere CSI ----------------------------------------------------------------
+- name: Create the CSI namespace
+  kubernetes.core.k8s:
+    kind: Namespace
+    name: vmware-system-csi
+    state: present
+
+- name: Create the CSI configuration secret
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: vsphere-config-secret
+        namespace: vmware-system-csi
+      type: Opaque
+      stringData:
+        csi-vsphere.conf: |
+          [Global]
+          cluster-id = "{{ cluster_name }}"
+
+          [VirtualCenter "{{ vcenter_hostname }}"]
+          insecure-flag = "{{ (not vcenter_validate_certs) | lower }}"
+          user = "{{ csi_principal_upn }}"
+          password = "{{ csi_password }}"
+          port = "443"
+          datacenters = "{{ vsphere_datacenter }}"
+  no_log: true
+
+- name: Ensure the manifest cache directory exists
+  ansible.builtin.file:
+    path: "{{ state_dir }}/manifests"
+    state: directory
+    mode: "0755"
+
+- name: Download the vSphere CSI manifest
+  ansible.builtin.get_url:
+    url: "https://raw.githubusercontent.com/kubernetes-sigs/vsphere-csi-driver/{{ csi_version }}/manifests/vanilla/vsphere-csi-driver.yaml"
+    dest: "{{ state_dir }}/manifests/vsphere-csi-driver-{{ csi_version }}.yaml"
+    mode: "0644"
+
+- name: Deploy the vSphere CSI driver
+  kubernetes.core.k8s:
+    state: present
+    src: "{{ state_dir }}/manifests/vsphere-csi-driver-{{ csi_version }}.yaml"
+    apply: true
+    server_side_apply:
+      field_manager: vsphere-rke
+
+# RKE2 labels control-plane nodes "true"; the upstream affinity uses "Exists", so no patch is needed.
+- name: Size the CSI controller to the control plane
+  kubernetes.core.k8s:
+    state: patched
+    kind: Deployment
+    name: vsphere-csi-controller
+    namespace: vmware-system-csi
+    definition:
+      spec:
+        replicas: "{{ [control_plane_count | int, 3] | min }}"
+
+- name: Wait for the CSI controller
+  kubernetes.core.k8s_info:
+    kind: Deployment
+    name: vsphere-csi-controller
+    namespace: vmware-system-csi
+  register: csi_ctl
+  until: >-
+    csi_ctl.resources | length > 0 and
+    (csi_ctl.resources[0].status.availableReplicas | default(0) | int) == ([control_plane_count | int, 3] | min)
+  retries: 40
+  delay: 15
+
+- name: Wait for the CSI node plugin on every node
+  kubernetes.core.k8s_info:
+    kind: DaemonSet
+    name: vsphere-csi-node
+    namespace: vmware-system-csi
+  register: csi_node
+  until: >-
+    csi_node.resources | length > 0 and
+    (csi_node.resources[0].status.numberReady | default(0) | int) == groups['k8s_cluster'] | length
+  retries: 40
+  delay: 15
+
+# --- StorageClass ---------------------------------------------------------------
+- name: Create the StorageClass backed by the SPBM policy
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: storage.k8s.io/v1
+      kind: StorageClass
+      metadata:
+        name: "{{ storageclass_name }}"
+        annotations:
+          storageclass.kubernetes.io/is-default-class: "{{ storageclass_default | bool | lower }}"
+      provisioner: csi.vsphere.vmware.com
+      allowVolumeExpansion: true
+      reclaimPolicy: "{{ storageclass_reclaim_policy }}"
+      volumeBindingMode: WaitForFirstConsumer
+      parameters:
+        storagepolicyname: "{{ storage_policy_name }}"
+        csi.storage.k8s.io/fstype: "{{ storageclass_fstype }}"
+
+- name: Smoke test
+  ansible.builtin.import_tasks: smoke_test.yml
+  when: csi_smoke_test | bool

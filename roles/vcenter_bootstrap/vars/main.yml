@@ -1,0 +1,46 @@
+---
+govc_env:
+  GOVC_URL: "https://{{ vcenter_hostname }}"
+  GOVC_USERNAME: "{{ vcenter_admin_username }}"
+  GOVC_PASSWORD: "{{ vcenter_admin_password }}"
+  GOVC_INSECURE: "{{ (not vcenter_validate_certs) | ternary('1', '0') }}"
+
+vcenter_admin_lookup_args:
+  vcenter_hostname: "{{ vcenter_hostname }}"
+  vcenter_username: "{{ vcenter_admin_username }}"
+  vcenter_password: "{{ vcenter_admin_password }}"
+  vcenter_validate_certs: "{{ vcenter_validate_certs }}"
+
+sso_service_accounts:
+  - name: "{{ prov_user }}"
+    password: "{{ prov_password }}"
+    description: "{{ cluster_name }}: OpenTofu node provisioning"
+  - name: "{{ csi_user }}"
+    password: "{{ csi_password }}"
+    description: "{{ cluster_name }}: vSphere CPI/CSI"
+
+prov_principal: "{{ sso_domain | upper }}\\{{ prov_user }}"
+csi_principal: "{{ sso_domain | upper }}\\{{ csi_user }}"
+
+placement_object: >-
+  {{ {'object_type': 'ResourcePool', 'object_name': vsphere_resource_pool}
+     if vsphere_resource_pool | length > 0 else
+     {'object_type': 'ClusterComputeResource', 'object_name': vsphere_cluster} }}
+
+# Permission matrix (rationale: .claude/skills/vsphere-rke/references/privileges.md)
+vcenter_permissions: >-
+  {{
+    [
+      {'principal': prov_principal, 'role': prov_role,      'object_type': 'Folder',     'object_name': vm_folder,          'propagate': true},
+      {'principal': prov_principal, 'role': prov_role,      'object_type': 'Datastore',  'object_name': vsphere_datastore,  'propagate': false},
+      {'principal': prov_principal, 'role': prov_role,      'object_type': 'Network',    'object_name': vsphere_network,    'propagate': false},
+      {'principal': prov_principal, 'role': placement_role, 'propagate': true} | combine(placement_object),
+      {'principal': prov_principal, 'role': 'ReadOnly',     'object_type': 'Datacenter', 'object_name': vsphere_datacenter, 'propagate': false},
+      {'principal': csi_principal,  'role': csi_role,       'object_type': 'Folder',     'object_name': 'rootFolder',       'propagate': false},
+      {'principal': csi_principal,  'role': 'ReadOnly',     'object_type': 'Datacenter', 'object_name': vsphere_datacenter, 'propagate': false},
+      {'principal': csi_principal,  'role': 'ReadOnly',     'object_type': 'ClusterComputeResource', 'object_name': vsphere_cluster, 'propagate': true},
+      {'principal': csi_principal,  'role': csi_role,       'object_type': 'Folder',     'object_name': vm_folder,          'propagate': true},
+    ]
+    + (csi_datastore_list | default([csi_datastore]) | map('community.general.dict_kv', 'object_name')
+       | map('combine', {'principal': csi_principal, 'role': csi_role, 'object_type': 'Datastore', 'propagate': false}) | list)
+  }}

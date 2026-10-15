@@ -1,0 +1,17 @@
+---
+- name: Ensure least-privilege vCenter roles
+  community.vmware.vmware_local_role_manager:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_admin_username }}"
+    password: "{{ vcenter_admin_password }}"
+    validate_certs: "{{ vcenter_validate_certs }}"
+    local_role_name: "{{ item.name }}"
+    local_privilege_ids: "{{ item.privileges }}"
+    action: set
+    state: present
+  loop:
+    - { name: "{{ prov_role }}", privileges: "{{ prov_role_privileges }}" }
+    - { name: "{{ placement_role }}", privileges: "{{ placement_role_privileges }}" }
+    - { name: "{{ csi_role }}", privileges: "{{ csi_role_privileges }}" }
+  loop_control:
+    label: "{{ item.name }}"

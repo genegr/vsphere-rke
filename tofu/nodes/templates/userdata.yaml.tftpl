@@ -1,0 +1,24 @@
+#cloud-config
+hostname: ${hostname}
+manage_etc_hosts: true
+ssh_pwauth: false
+disable_root: true
+users:
+  - name: ${node_user}
+    groups: [sudo]
+    sudo: "ALL=(ALL) NOPASSWD:ALL"
+    shell: /bin/bash
+    lock_passwd: true
+    ssh_authorized_keys:
+      - ${ssh_public_key}
+%{ if network_mode == "dhcp" ~}
+# systemd-networkd releases the lease on shutdown by default; when several nodes reboot
+# together the DHCP server then hands the addresses out in a different order and node
+# identities get scrambled. Keep the lease so each MAC gets its address back.
+write_files:
+  - path: /etc/systemd/network/10-netplan-nic0.network.d/10-keep-dhcp-lease.conf
+    permissions: "0644"
+    content: |
+      [DHCPv4]
+      SendRelease=no
+%{ endif ~}

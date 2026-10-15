@@ -1,0 +1,24 @@
+---
+# Stage 2 - node VMs with OpenTofu, authenticated as the provisioner service account only.
+- name: Provision node VMs
+  hosts: localhost
+  gather_facts: false
+  tags: [nodes]
+  roles:
+    - role: nodes
+
+- name: Wait for the nodes to accept SSH and finish cloud-init
+  hosts: k8s_cluster
+  gather_facts: false
+  tags: [nodes]
+  tasks:
+    - name: Wait for SSH
+      ansible.builtin.wait_for_connection:
+        timeout: 600
+
+    - name: Wait for cloud-init to finish
+      ansible.builtin.command: cloud-init status --wait
+      changed_when: false
+      register: cloud_init_status
+      # rc 2 = finished with recoverable warnings (e.g. deprecated keys)
+      failed_when: cloud_init_status.rc not in [0, 2]

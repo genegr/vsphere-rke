@@ -1,0 +1,15 @@
+---
+# Stage 3 - OS preparation and RKE2 (lablabs.rke2) on the generated node inventory.
+- name: Prepare the nodes
+  hosts: k8s_cluster
+  gather_facts: true
+  tags: [rke2, node_prep]
+  roles:
+    - role: node_prep
+
+- name: Install RKE2
+  hosts: k8s_cluster
+  gather_facts: true
+  tags: [rke2]
+  roles:
+    - role: lablabs.rke2

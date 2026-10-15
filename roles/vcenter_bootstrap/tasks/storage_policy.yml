@@ -1,0 +1,100 @@
+---
+# Tag-based SPBM policy consumed by the vSphere CSI StorageClass.
+# csi_datastore may be a single datastore or a datastore cluster (all members get tagged).
+- name: Resolve the CSI datastore MoID (datastore vs datastore cluster)
+  ansible.builtin.set_fact:
+    csi_datastore_moid: >-
+      {{ lookup('vmware.vmware.moid_from_path',
+                '/' ~ vsphere_datacenter ~ '/datastore/' ~ csi_datastore,
+                **vcenter_admin_lookup_args) }}
+
+- name: Gather datastore membership (datastore cluster only)
+  community.vmware.vmware_datastore_info:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_admin_username }}"
+    password: "{{ vcenter_admin_password }}"
+    validate_certs: "{{ vcenter_validate_certs }}"
+    datacenter_name: "{{ vsphere_datacenter }}"
+  register: datastore_info
+  when: csi_datastore_moid.startswith('group-p')
+
+- name: Build the list of datastores to tag
+  ansible.builtin.set_fact:
+    csi_datastore_list: >-
+      {{ [csi_datastore] if not csi_datastore_moid.startswith('group-p')
+         else datastore_info.datastores
+              | selectattr('datastore_cluster', 'defined')
+              | selectattr('datastore_cluster', 'equalto', csi_datastore)
+              | map(attribute='name') | list }}
+
+- name: Ensure the storage tag category exists
+  vmware.vmware.tag_categories:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_admin_username }}"
+    password: "{{ vcenter_admin_password }}"
+    validate_certs: "{{ vcenter_validate_certs }}"
+    state: present
+    tag_categories:
+      - name: "{{ storage_tag_category }}"
+        description: "Kubernetes datastore selection ({{ cluster_name }})"
+        cardinality: SINGLE
+        associable_types: [Datastore, StoragePod]
+
+- name: Ensure the storage tag exists
+  vmware.vmware.tags:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_admin_username }}"
+    password: "{{ vcenter_admin_password }}"
+    validate_certs: "{{ vcenter_validate_certs }}"
+    state: present
+    tags:
+      - name: "{{ storage_tag_name }}"
+        category_name: "{{ storage_tag_category }}"
+        description: "Datastores for {{ cluster_name }} CSI volumes"
+
+- name: Tag the CSI datastore(s)
+  vmware.vmware.tag_associations:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_admin_username }}"
+    password: "{{ vcenter_admin_password }}"
+    validate_certs: "{{ vcenter_validate_certs }}"
+    state: present
+    object_name: "{{ item }}"
+    object_type: Datastore
+    tags:
+      - name: "{{ storage_tag_name }}"
+        category_name: "{{ storage_tag_category }}"
+  loop: "{{ csi_datastore_list }}"
+
+- name: Tag the datastore cluster object itself
+  vmware.vmware.tag_associations:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_admin_username }}"
+    password: "{{ vcenter_admin_password }}"
+    validate_certs: "{{ vcenter_validate_certs }}"
+    state: present
+    object_moid: "{{ csi_datastore_moid }}"
+    object_type: DatastoreCluster
+    tags:
+      - name: "{{ storage_tag_name }}"
+        category_name: "{{ storage_tag_category }}"
+  when: csi_datastore_moid.startswith('group-p')
+
+# SPBM learns about new tag categories asynchronously: right after the category is
+# created the policy call fails with "Unrecognized capability". Retry until it syncs.
+- name: Ensure the tag-based storage policy exists
+  community.vmware.vmware_vm_storage_policy:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_admin_username }}"
+    password: "{{ vcenter_admin_password }}"
+    validate_certs: "{{ vcenter_validate_certs }}"
+    name: "{{ storage_policy_name }}"
+    description: "{{ cluster_name }} CSI volumes (tag {{ storage_tag_category }}:{{ storage_tag_name }})"
+    tag_category: "{{ storage_tag_category }}"
+    tag_name: "{{ storage_tag_name }}"
+    tag_affinity: true
+    state: present
+  register: storage_policy_result
+  until: storage_policy_result is succeeded
+  retries: 40
+  delay: 30

@@ -1,0 +1,102 @@
+---
+# Ubuntu cloud-image OVA -> VM template in the cluster folder. The VM is never powered on,
+# so every clone runs cloud-init from scratch.
+- name: Check whether the template already exists
+  community.vmware.vmware_guest_info:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_admin_username }}"
+    password: "{{ vcenter_admin_password }}"
+    validate_certs: "{{ vcenter_validate_certs }}"
+    datacenter: "{{ vsphere_datacenter }}"
+    folder: "/{{ vsphere_datacenter }}/vm/{{ vm_folder }}"
+    name: "{{ template_name }}"
+  register: template_info
+  failed_when: false
+
+- name: Delete the existing template (force_template=true)
+  community.vmware.vmware_guest:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_admin_username }}"
+    password: "{{ vcenter_admin_password }}"
+    validate_certs: "{{ vcenter_validate_certs }}"
+    datacenter: "{{ vsphere_datacenter }}"
+    folder: "/{{ vsphere_datacenter }}/vm/{{ vm_folder }}"
+    name: "{{ template_name }}"
+    state: absent
+  when:
+    - force_template | bool
+    - template_info.instance is defined
+
+- name: Build the template
+  when: template_info.instance is not defined or (force_template | bool)
+  block:
+    - name: Ensure the OVA cache directory exists
+      ansible.builtin.file:
+        path: "{{ state_dir }}/cache"
+        state: directory
+        mode: "0755"
+
+    - name: Download the Ubuntu cloud image OVA
+      ansible.builtin.get_url:
+        url: "{{ ubuntu_ova_url }}"
+        dest: "{{ state_dir }}/cache/{{ ubuntu_ova_url | basename }}"
+        mode: "0644"
+        timeout: 600
+
+    - name: Deploy the OVA (powered off)
+      community.vmware.vmware_deploy_ovf:
+        hostname: "{{ vcenter_hostname }}"
+        username: "{{ vcenter_admin_username }}"
+        password: "{{ vcenter_admin_password }}"
+        validate_certs: "{{ vcenter_validate_certs }}"
+        datacenter: "{{ vsphere_datacenter }}"
+        cluster: "{{ vsphere_cluster }}"
+        resource_pool: "{{ vsphere_resource_pool | default('Resources', true) }}"
+        datastore: "{{ vsphere_datastore }}"
+        folder: "/{{ vsphere_datacenter }}/vm/{{ vm_folder }}"
+        name: "{{ template_name }}"
+        ovf: "{{ state_dir }}/cache/{{ ubuntu_ova_url | basename }}"
+        networks:
+          "VM Network": "{{ vsphere_network }}"
+        disk_provisioning: thin
+        power_on: false
+        wait: false
+
+    - name: Upgrade virtual hardware and enable disk UUIDs (required by CSI)
+      community.vmware.vmware_guest:
+        hostname: "{{ vcenter_hostname }}"
+        username: "{{ vcenter_admin_username }}"
+        password: "{{ vcenter_admin_password }}"
+        validate_certs: "{{ vcenter_validate_certs }}"
+        datacenter: "{{ vsphere_datacenter }}"
+        folder: "/{{ vsphere_datacenter }}/vm/{{ vm_folder }}"
+        name: "{{ template_name }}"
+        state: present
+        hardware:
+          version: "{{ vm_hw_version }}"
+        advanced_settings:
+          - key: disk.EnableUUID
+            value: "TRUE"
+
+    - name: Remove the OVA vApp options (ISO transport) from the VM
+      vm_vapp_config:
+        hostname: "{{ vcenter_hostname }}"
+        username: "{{ vcenter_admin_username }}"
+        password: "{{ vcenter_admin_password }}"
+        validate_certs: "{{ vcenter_validate_certs }}"
+        datacenter: "{{ vsphere_datacenter }}"
+        folder: "/{{ vsphere_datacenter }}/vm/{{ vm_folder }}"
+        name: "{{ template_name }}"
+        state: absent
+
+    - name: Convert the VM to a template
+      community.vmware.vmware_guest:
+        hostname: "{{ vcenter_hostname }}"
+        username: "{{ vcenter_admin_username }}"
+        password: "{{ vcenter_admin_password }}"
+        validate_certs: "{{ vcenter_validate_certs }}"
+        datacenter: "{{ vsphere_datacenter }}"
+        folder: "/{{ vsphere_datacenter }}/vm/{{ vm_folder }}"
+        name: "{{ template_name }}"
+        state: present
+        is_template: true

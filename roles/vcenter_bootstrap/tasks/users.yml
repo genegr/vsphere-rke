@@ -1,0 +1,42 @@
+---
+# No Ansible module or OpenTofu provider manages vCenter SSO users, so this is the
+# one place we call govc (argv form, no shell). Idempotent: create only if missing.
+- name: Look up SSO service accounts
+  ansible.builtin.command:
+    argv: [govc, sso.user.id, "{{ item.name }}"]
+  environment: "{{ govc_env }}"
+  loop: "{{ sso_service_accounts }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: sso_user_lookup
+  changed_when: false
+  failed_when: false
+
+- name: Create missing SSO service accounts
+  ansible.builtin.command:
+    argv:
+      - govc
+      - sso.user.create
+      - -p
+      - "{{ item.item.password }}"
+      - -d
+      - "{{ item.item.description }}"
+      - "{{ item.item.name }}"
+  environment: "{{ govc_env }}"
+  loop: "{{ sso_user_lookup.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when: item.rc != 0
+  changed_when: true
+  no_log: true
+
+- name: Reset SSO service account passwords to the vault values
+  ansible.builtin.command:
+    argv: [govc, sso.user.update, -p, "{{ item.password }}", "{{ item.name }}"]
+  environment: "{{ govc_env }}"
+  loop: "{{ sso_service_accounts }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: sso_reset_passwords | bool
+  changed_when: true
+  no_log: true

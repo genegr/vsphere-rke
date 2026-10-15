@@ -1,0 +1,13 @@
+---
+# Stage 4 - vSphere CPI + CSI + StorageClass, configured with the CSI service account.
+- name: Deploy vSphere CPI and CSI
+  hosts: localhost
+  gather_facts: false
+  tags: [csi]
+  module_defaults:
+    group/kubernetes.core.k8s:
+      kubeconfig: "{{ state_dir }}/kubeconfig"
+    kubernetes.core.helm:
+      kubeconfig: "{{ state_dir }}/kubeconfig"
+  roles:
+    - role: vsphere_cpi_csi

@@ -1,0 +1,11 @@
+---
+- name: Ensure the cluster VM folder exists
+  vmware.vmware.folder:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_admin_username }}"
+    password: "{{ vcenter_admin_password }}"
+    validate_certs: "{{ vcenter_validate_certs }}"
+    datacenter: "{{ vsphere_datacenter }}"
+    relative_path: "{{ vm_folder }}"
+    folder_type: vm
+    state: present

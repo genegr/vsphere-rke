@@ -1,0 +1,24 @@
+---
+# Variables for the node hosts (consumed by roles/node_prep and the lablabs.rke2 role).
+ansible_become: true
+
+rke2_servers_group_name: rke2_servers
+rke2_agents_group_name: rke2_agents
+rke2_cluster_group_name: k8s_cluster
+
+# rke2_version comes from group_vars/all/main.yml
+rke2_token: "{{ vault_rke2_token }}"
+
+# Without a VIP the first control-plane node is the registration/API address.
+rke2_ha_mode: "{{ rke2_api_vip | length > 0 }}"
+rke2_ha_mode_keepalived: true
+rke2_api_ip: "{{ rke2_api_vip if rke2_api_vip | length > 0 else hostvars[groups['rke2_servers'][0]]['ansible_host'] }}"
+rke2_additional_sans: "{{ groups['rke2_servers'] | map('extract', hostvars, 'ansible_host') | list }}"
+
+# Out-of-tree vSphere CPI owns node initialisation (deployed in stage 4).
+rke2_disable_cloud_controller: true
+rke2_cloud_provider_name: external
+
+rke2_download_kubeconf: true
+rke2_download_kubeconf_path: "{{ state_dir }}"
+rke2_download_kubeconf_file_name: kubeconfig

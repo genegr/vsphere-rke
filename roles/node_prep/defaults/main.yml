@@ -1,0 +1,7 @@
+---
+node_os_upgrade: true
+node_reboot_if_required: true
+node_packages:
+  - open-vm-tools
+  - multipath-tools
+  - nfs-common

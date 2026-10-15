@@ -1,0 +1,17 @@
+---
+# RKE2 node names come from the inventory (VM names). If DHCP moved addresses between
+# VMs, the IP in the inventory now reaches a different VM: stop before registering
+# nodes under the wrong names.
+- name: Read the real hostname
+  ansible.builtin.command: hostname
+  register: real_hostname
+  changed_when: false
+
+- name: Assert the host behind this IP is the expected VM
+  ansible.builtin.assert:
+    that: real_hostname.stdout == inventory_hostname
+    fail_msg: >-
+      {{ ansible_host }} answers as '{{ real_hostname.stdout }}', not '{{ inventory_hostname }}':
+      node IPs changed. Re-run playbooks/02-nodes.yml to refresh inventory/nodes.generated.yml
+      (and prefer DHCP reservations or network_mode=static).
+    quiet: true

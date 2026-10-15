@@ -1,0 +1,78 @@
+---
+# =============================================================================
+# Deployment variables. Secrets live in vault.yml (see vault.yml.example).
+# =============================================================================
+
+cluster_name: rke2-01
+
+# --- vCenter -----------------------------------------------------------------
+vcenter_hostname: vcenter.example.com
+vcenter_validate_certs: false
+sso_domain: vsphere.local
+vcenter_admin_username: "administrator@{{ sso_domain }}"
+vcenter_admin_password: "{{ vault_vcenter_admin_password }}"
+
+vsphere_datacenter: Datacenter
+vsphere_cluster: Cluster
+vsphere_resource_pool: ""                      # "" = cluster root resource pool
+vsphere_datastore: datastore1   # node VM disks
+vsphere_network: VM Network
+vm_folder: "{{ cluster_name }}"                # created under /<dc>/vm
+
+# --- Service accounts (SSO users) and roles --------------------------------------
+prov_user: "svc-{{ cluster_name }}-prov"       # used by OpenTofu only
+prov_password: "{{ vault_prov_password }}"
+csi_user: "svc-{{ cluster_name }}-csi"         # used by in-cluster CPI + CSI only
+csi_password: "{{ vault_csi_password }}"
+prov_role: "{{ cluster_name }}-provisioner"
+placement_role: "{{ cluster_name }}-placement"
+csi_role: "{{ cluster_name }}-csi"
+
+# --- Ubuntu template ---------------------------------------------------------------
+ubuntu_release: noble                          # 24.04 LTS cloud image
+ubuntu_ova_url: "https://cloud-images.ubuntu.com/{{ ubuntu_release }}/current/{{ ubuntu_release }}-server-cloudimg-amd64.ova"
+template_name: "{{ cluster_name }}-ubuntu-{{ ubuntu_release }}-tpl"
+vm_hw_version: 21
+
+# --- Nodes -------------------------------------------------------------------
+control_plane_count: 3
+worker_count: 2
+cp_cpus: 4
+cp_memory_mb: 8192
+cp_disk_gb: 60
+worker_cpus: 4
+worker_memory_mb: 16384
+worker_disk_gb: 100
+node_user: rke
+
+# Network: "dhcp" (default) or "static"
+network_mode: dhcp
+# Used only with network_mode: static. Node i gets cidrhost(static_cidr, static_ip_offset + i),
+# control-plane nodes first, then workers.
+static_cidr: 192.0.2.0/24
+static_ip_offset: 0                            # e.g. 20 -> 192.0.2.20 (set to a free range!)
+static_gateway: 192.0.2.1
+dns_servers: [172.17.0.53]
+dns_search: [example.com]
+
+# --- RKE2 --------------------------------------------------------------------
+rke2_version: v1.36.5+rke2r1
+rke2_api_vip: ""                               # "" = first control-plane node IP (no VIP)
+
+# --- vSphere CPI / CSI --------------------------------------------------------
+cpi_chart_version: 1.36.0                      # latest published vsphere-cpi chart (CPI v1.36 for k8s 1.36)
+cpi_region_tag_category: ""                    # vSphere tag categories for topology; "" = no zones
+cpi_zone_tag_category: ""
+csi_version: v3.7.4
+csi_datastore: "{{ vsphere_datastore }}"       # datastore (or datastore cluster) targeted by the storage policy
+storage_tag_category: "{{ cluster_name }}-k8s-storage"
+storage_tag_name: "{{ cluster_name }}-csi-datastore"
+storage_policy_name: "{{ cluster_name }}-csi-policy"
+storageclass_name: vsphere-csi
+storageclass_default: true
+storageclass_reclaim_policy: Delete
+storageclass_fstype: ext4
+csi_smoke_test: false
+
+# --- Local paths (inside the toolbox container) ------------------------------
+state_dir: "{{ (inventory_dir ~ '/../.state') | realpath }}"

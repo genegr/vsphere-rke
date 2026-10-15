@@ -1,0 +1,30 @@
+---
+# Run one govc command with credentials from the vault (none on the command line).
+#   ansible-playbook playbooks/tools/govc.yml -e "govc_args='ls /Datacenter/vm/rke2-01'"
+#   ansible-playbook playbooks/tools/govc.yml -e "govc_args='permissions.ls /Datacenter'" -e govc_as=csi
+# govc_as: admin (default) | prov | csi
+- name: govc
+  hosts: localhost
+  gather_facts: false
+  vars:
+    govc_as: admin
+    govc_identities:
+      admin: { user: "{{ vcenter_admin_username }}", password: "{{ vcenter_admin_password }}" }
+      prov: { user: "{{ prov_user }}@{{ sso_domain }}", password: "{{ prov_password }}" }
+      csi: { user: "{{ csi_user }}@{{ sso_domain }}", password: "{{ csi_password }}" }
+  tasks:
+    - name: govc {{ govc_args }}
+      ansible.builtin.command:
+        argv: "{{ ['govc'] + (govc_args | ansible.builtin.split) }}"
+      environment:
+        GOVC_URL: "https://{{ vcenter_hostname }}"
+        GOVC_USERNAME: "{{ govc_identities[govc_as].user }}"
+        GOVC_PASSWORD: "{{ govc_identities[govc_as].password }}"
+        GOVC_INSECURE: "{{ (not vcenter_validate_certs) | ternary('1', '0') }}"
+        GOVC_DATACENTER: "{{ vsphere_datacenter }}"
+      register: govc_out
+      changed_when: false
+
+    - name: Output
+      ansible.builtin.debug:
+        msg: "{{ govc_out.stdout_lines }}"

@@ -1,0 +1,65 @@
+---
+# -e csi_smoke_test=true: provision a PVC, write to it from a pod, then clean up.
+- name: Create the smoke-test PVC
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
+        name: csi-smoke
+        namespace: default
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: "{{ storageclass_name }}"
+        resources:
+          requests:
+            storage: 1Gi
+
+- name: Create the smoke-test pod and wait until it runs
+  kubernetes.core.k8s:
+    state: present
+    wait: true
+    wait_condition:
+      type: Ready
+      status: "True"
+    wait_timeout: 300
+    definition:
+      apiVersion: v1
+      kind: Pod
+      metadata:
+        name: csi-smoke
+        namespace: default
+      spec:
+        containers:
+          - name: writer
+            image: busybox:1.37
+            command: [sh, -c, "echo ok > /data/probe && sleep 3600"]
+            volumeMounts:
+              - name: data
+                mountPath: /data
+        volumes:
+          - name: data
+            persistentVolumeClaim:
+              claimName: csi-smoke
+
+- name: Check that the PVC is bound
+  kubernetes.core.k8s_info:
+    kind: PersistentVolumeClaim
+    name: csi-smoke
+    namespace: default
+  register: smoke_pvc
+  failed_when: smoke_pvc.resources[0].status.phase != 'Bound'
+
+- name: Show the result
+  ansible.builtin.debug:
+    msg: "PVC {{ smoke_pvc.resources[0].status.phase }} -> {{ smoke_pvc.resources[0].spec.volumeName }}"
+
+- name: Clean up the smoke test
+  kubernetes.core.k8s:
+    state: absent
+    wait: true
+    definition:
+      - { apiVersion: v1, kind: Pod, metadata: { name: csi-smoke, namespace: default } }
+      - { apiVersion: v1, kind: PersistentVolumeClaim, metadata: { name: csi-smoke, namespace: default } }
+  when: not (csi_smoke_keep | default(false) | bool)

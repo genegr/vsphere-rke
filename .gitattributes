@@ -1,0 +1,2 @@
+# Everything runs on Linux (toolbox container / jump box): always LF, even on Windows checkouts.
+* text=auto eol=lf

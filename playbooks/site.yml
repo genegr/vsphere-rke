@@ -1,0 +1,13 @@
+---
+# Full deployment: vCenter bootstrap -> node VMs -> RKE2 -> vSphere CPI/CSI.
+- name: Stage 1 - vCenter bootstrap
+  ansible.builtin.import_playbook: 01-vcenter-bootstrap.yml
+
+- name: Stage 2 - node VMs (OpenTofu)
+  ansible.builtin.import_playbook: 02-nodes.yml
+
+- name: Stage 3 - RKE2
+  ansible.builtin.import_playbook: 03-rke2.yml
+
+- name: Stage 4 - vSphere CPI/CSI
+  ansible.builtin.import_playbook: 04-vsphere-csi.yml

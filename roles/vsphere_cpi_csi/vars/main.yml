@@ -1,0 +1,2 @@
+---
+csi_principal_upn: "{{ csi_user }}@{{ sso_domain }}"

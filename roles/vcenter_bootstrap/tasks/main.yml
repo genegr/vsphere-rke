@@ -1,0 +1,24 @@
+---
+- name: SSO service accounts
+  ansible.builtin.import_tasks: users.yml
+  tags: [users]
+
+- name: Roles
+  ansible.builtin.import_tasks: roles.yml
+  tags: [roles]
+
+- name: VM folder
+  ansible.builtin.import_tasks: folder.yml
+  tags: [folder]
+
+- name: Storage policy
+  ansible.builtin.import_tasks: storage_policy.yml
+  tags: [storage_policy]
+
+- name: Permissions
+  ansible.builtin.import_tasks: permissions.yml
+  tags: [permissions]
+
+- name: Ubuntu template
+  ansible.builtin.import_tasks: template.yml
+  tags: [template]

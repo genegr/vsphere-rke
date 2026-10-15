@@ -1,0 +1,73 @@
+---
+- name: Ensure local state directories exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0700"
+  loop:
+    - "{{ state_dir }}/ssh"
+    - "{{ state_dir }}/tofu"
+
+- name: Ensure the node SSH keypair exists
+  community.crypto.openssh_keypair:
+    path: "{{ state_dir }}/ssh/id_ed25519"
+    type: ed25519
+    comment: "{{ cluster_name }}-ansible"
+  register: node_ssh_key
+
+- name: Apply the OpenTofu node stack (as the provisioner service account)
+  community.general.terraform:
+    project_path: "{{ (inventory_dir ~ '/../tofu/nodes') | realpath }}"
+    binary_path: /usr/local/bin/tofu
+    state: "{{ nodes_state }}"
+    force_init: true
+    backend_config:
+      path: "{{ state_dir | realpath }}/tofu/nodes.tfstate"
+    complex_vars: true
+    # Secrets go through TF_VAR_* (environment below), never -var: the module echoes
+    # the full command line on failure.
+    variables:
+      vcenter_server: "{{ vcenter_hostname }}"
+      vcenter_user: "{{ prov_user }}@{{ sso_domain }}"
+      allow_unverified_ssl: "{{ not vcenter_validate_certs }}"
+      datacenter: "{{ vsphere_datacenter }}"
+      cluster: "{{ vsphere_cluster }}"
+      resource_pool: "{{ vsphere_resource_pool }}"
+      datastore: "{{ vsphere_datastore }}"
+      network: "{{ vsphere_network }}"
+      folder: "{{ vm_folder }}"
+      template_name: "{{ template_name }}"
+      hw_version: "{{ vm_hw_version }}"
+      cluster_name: "{{ cluster_name }}"
+      control_plane_count: "{{ control_plane_count }}"
+      worker_count: "{{ worker_count }}"
+      cp_cpus: "{{ cp_cpus }}"
+      cp_memory_mb: "{{ cp_memory_mb }}"
+      cp_disk_gb: "{{ cp_disk_gb }}"
+      worker_cpus: "{{ worker_cpus }}"
+      worker_memory_mb: "{{ worker_memory_mb }}"
+      worker_disk_gb: "{{ worker_disk_gb }}"
+      node_user: "{{ node_user }}"
+      ssh_public_key: "{{ node_ssh_key.public_key }}"
+      network_mode: "{{ network_mode }}"
+      static_cidr: "{{ static_cidr }}"
+      static_ip_offset: "{{ static_ip_offset }}"
+      static_gateway: "{{ static_gateway }}"
+      dns_servers: "{{ dns_servers }}"
+      dns_search: "{{ dns_search }}"
+      inventory_path: "{{ inventory_dir | realpath }}/nodes.generated.yml"
+      ssh_private_key_path: "{{ state_dir | realpath }}/ssh/id_ed25519"
+  environment:
+    TF_VAR_vcenter_password: "{{ prov_password }}"
+    # -e tofu_debug=true: provider SOAP traces in .state/vsphere-debug (shows NoPermission privilegeId)
+    VSPHERE_CLIENT_DEBUG: "{{ tofu_debug | bool | ternary('true', 'false') }}"
+    VSPHERE_CLIENT_DEBUG_PATH: "{{ state_dir | realpath }}/vsphere-debug"
+  register: tofu_nodes
+
+- name: Show the nodes
+  ansible.builtin.debug:
+    var: tofu_nodes.outputs.nodes.value
+  when: nodes_state == 'present'
+
+- name: Reload the inventory with the generated node hosts
+  ansible.builtin.meta: refresh_inventory

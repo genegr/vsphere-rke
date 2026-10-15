@@ -1,0 +1,5 @@
+---
+# present = apply, absent = destroy (used by playbooks/99-destroy.yml)
+nodes_state: present
+# true = write vSphere provider SOAP traces to .state/vsphere-debug (privilege debugging)
+tofu_debug: false

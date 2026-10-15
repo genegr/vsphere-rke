@@ -1,0 +1,22 @@
+instance-id: ${hostname}
+local-hostname: ${hostname}
+network:
+  version: 2
+  ethernets:
+    nic0:
+      match:
+        name: "en*"
+%{ if network_mode == "static" ~}
+      dhcp4: false
+      addresses:
+        - ${address}/${prefix_length}
+      routes:
+        - to: default
+          via: ${gateway}
+      nameservers:
+        addresses: ${jsonencode(dns_servers)}
+        search: ${jsonencode(dns_search)}
+%{ else ~}
+      dhcp4: true
+      dhcp-identifier: mac
+%{ endif ~}

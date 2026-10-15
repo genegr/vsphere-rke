@@ -1,0 +1,9 @@
+---
+# Stage 1 - vCenter prerequisites, run as the SSO administrator:
+# service accounts, roles, folder, storage policy, permissions, Ubuntu template.
+- name: Bootstrap vCenter
+  hosts: localhost
+  gather_facts: false
+  tags: [bootstrap]
+  roles:
+    - role: vcenter_bootstrap

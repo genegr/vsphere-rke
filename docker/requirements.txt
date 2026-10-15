@@ -1,0 +1,8 @@
+ansible-core==2.21.5
+# vSphere: pyVmomi + vSphere Automation SDK (tags, SPBM) used by community.vmware / vmware.vmware
+vcf-sdk==9.1.1.0
+pyvmomi==9.1.1.0
+kubernetes==37.0.1
+netaddr
+passlib
+jmespath

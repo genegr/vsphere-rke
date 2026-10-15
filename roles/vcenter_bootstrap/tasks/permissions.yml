@@ -1,0 +1,18 @@
+---
+# Where each service account gets which role. Matrix + rationale:
+# .claude/skills/vsphere-rke/references/privileges.md
+- name: Ensure object permissions for the service accounts
+  community.vmware.vmware_object_role_permission:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_admin_username }}"
+    password: "{{ vcenter_admin_password }}"
+    validate_certs: "{{ vcenter_validate_certs }}"
+    principal: "{{ item.principal }}"
+    role: "{{ item.role }}"
+    object_name: "{{ item.object_name }}"
+    object_type: "{{ item.object_type }}"
+    recursive: "{{ item.propagate }}"
+    state: present
+  loop: "{{ vcenter_permissions }}"
+  loop_control:
+    label: "{{ item.principal }} -> {{ item.role }} @ {{ item.object_type }}:{{ item.object_name }} (propagate={{ item.propagate }})"
