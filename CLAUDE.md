@@ -77,11 +77,12 @@ Lab specifics (jump box, vCenter, SSO domain, datacenter/cluster/datastore names
   hosts/VMs carry those tags. Otherwise nodes never get a providerID.
 - **CSI v3.7.4 controller affinity uses `Exists`** on `node-role.kubernetes.io/control-plane`, so RKE2's
   `"true"` label works without a patch.
-- **SPBM ignores API-created tag categories** (seen on two vCenter 8.0.3 labs): the policy call fails with
-  `Unrecognized capability` and sps.log logs `Failed to fetch tag category …`. Waiting doesn't help. Neither does
-  creating or editing through the internal `/invsvc` API the vSphere Client uses, whatever the cardinality or
-  existing tags. One edit in the vSphere Client ("Tags per object" → "Many tags") fixes it within seconds,
-  4 out of 4 times. Stage 1 stops with that instruction, and an existing category keeps its cardinality. Details in the skill.
+- **SPBM needs namespace-qualified associable types** (vCenter 8.0.3, both labs): a tag category whose
+  associable types are stored as bare `Datastore`/`StoragePod` is invisible to SPBM, and PbmCreate fails with
+  `Unrecognized capability`. They must be stored as `urn:vim25:Datastore`/`urn:vim25:StoragePod`, which is what
+  the vSphere Client writes. REST shows the bare names either way, `vmware.vmware.tag_categories` and govc only
+  write bare names, so stage 1 creates (POST) or re-qualifies (PATCH) the category through the REST API with
+  `ansible.builtin.uri`. Details in the skill.
 - **Tag categories are ACL'd through global permissions.** vpxd-svcs logs a `System.Read` denial roughly every
   5 min for `svc-<cluster>-csi` on every tag category. This is harmless without CSI topology. Only add a global
   read-only permission for the CSI user if topology/zones are enabled.

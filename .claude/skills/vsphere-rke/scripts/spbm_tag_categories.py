@@ -6,8 +6,8 @@ Run inside the toolbox from the repo root:
 Reads vcenter_hostname / sso_domain from inventory/group_vars/all/main.yml (overridden by
 overrides.yml when present) and the admin password from the vault (via .state/vault-pass),
 so no secret appears on a command line.
-If a category created by stage 1 is missing here, the storage-policy task fails with
-"Unrecognized capability": edit the category once in the vSphere Client (see the skill).
+If a category is missing here, the storage-policy task fails with "Unrecognized capability":
+its associable types lack the urn:vim25 namespace (see the skill); re-run stage 1 --tags storage_policy.
 """
 import os
 import ssl

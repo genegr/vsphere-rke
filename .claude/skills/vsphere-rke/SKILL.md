@@ -66,23 +66,24 @@ First rule out a missing grant with `playbooks/vcenter-access.yml --tags verify`
 `roles/vcenter_bootstrap/defaults/main.yml` and run `playbooks/vcenter-access.yml`. Document it in
 `docs/vcenter-user-profiles.md` and `references/privileges.md`. Repeat until the run succeeds.
 
-**Storage policy "Unrecognized capability … storage/tag".** SPBM (sps) doesn't know the tag category. Stage 1 stops
-with the fix: ask the user to edit the category once in the vSphere Client ("Tags per object" → "Many tags",
-save), then re-run stage 1. The SPBM probe shows what SPBM knows. Don't wait, retry, or restart services for this.
-Findings (vCenter 8.0.3 build 24022515, 2026-10-16, from vpxd-svcs.log + sps.log over a read-only root shell):
-- **API-created categories:** every category created or edited through the public tagging API (vmware.vmware
-  modules, govc) gets `CapabilityMetadataManagerImpl - Failed to fetch tag category InventoryServiceCategory:<id>`
-  in sps.log. PbmCreate fails until something changes that. A second 8.0.3 lab showed the same message.
-- **Ruled out:** cardinality (SINGLE/MULTIPLE), associable types, tag attachment (attached, unattached, untagged
-  datastore), other categories/tags on the datastore, waiting (30+ min).
-- **Also ruled out, the vSphere Client's own backend API:** vmodl1 `/invsvc/vmomi/sdk`, namespace
-  `inventoryservice` 4.0: `InventoryServiceLogin`, `CreateInventoryServiceCategory`,
-  `CreateInventoryServiceTag`, `UpdateInventoryServiceCategoryDescription`, including a single→multiple change.
-  vpxd-svcs logs these as `vmodl.MoCategory`, the same as GUI edits, and SPBM still doesn't pick them up.
-  The remaining difference is the GUI backend's SAML login (`InventoryServiceSamlLogin`); that hasn't been tested.
-- **What works:** a vSphere Client edit of the category, observed 4 out of 4 times; the policy works within seconds.
-- **History:** in March 2026 the same vCenter created another team's tag-based policy 8 s after an API-created category.
-  So it worked once, and something cached in sps/vpxd-svcs since then differs. Cause unknown.
+**Storage policy "Unrecognized capability … storage/tag".** SPBM (sps) doesn't know the tag category, because its
+associable types are stored without the vSphere namespace. Run the SPBM probe: if the category is missing, re-run
+`01-vcenter-bootstrap.yml --tags storage_policy`, which PATCHes the types to `urn:vim25:Datastore`/`urn:vim25:StoragePod`.
+The policy then works within seconds. Don't wait, retry, or restart services for this.
+Root cause (vCenter 8.0.3 build 24022515, 2026-10-16):
+- **Stored type names:** the tagging service stores associable types as `QName{namespaceURI, localPart}`. The
+  vSphere Client writes `urn:vim25:Datastore`. The public REST API stores exactly what it's given, and
+  `vmware.vmware.tag_categories` and govc send bare `Datastore`, which leaves the namespace empty. SPBM only lists
+  categories with the qualified type: for bare ones sps.log logs
+  `CapabilityMetadataManagerImpl - Failed to fetch tag category InventoryServiceCategory:<id>`.
+- **REST hides it:** `GET /api/cis/tagging/category/<id>` returns bare names in both cases. Only the internal
+  invsvc API (vmodl1 `/invsvc/vmomi/sdk`, `InventoryServiceCategoryInfo.associableEntityType`) shows the
+  namespace.
+- **Why any GUI edit "fixed" it:** saving a category in the vSphere Client rewrites the types with the namespace.
+  That's the effect we first attributed to the cardinality change.
+- **Proof:** `POST /api/cis/tagging/category` with `associable_types: [urn:vim25:Datastore, urn:vim25:StoragePod]`
+  makes the policy work on the first attempt. `PATCH` with the same list repairs an existing bare category.
+  Cardinality, tag attachment and other tags on the datastore make no difference.
 To prove the CSI path without SPBM, use a temporary StorageClass with
 `parameters.datastoreurl: ds:///vmfs/volumes/<uuid>/` (`playbooks/tools/govc.yml -e "govc_args='datastore.info <ds>'"`).
 

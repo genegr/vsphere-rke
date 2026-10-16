@@ -117,10 +117,11 @@ static_ip_offset: 20          # nodes get 192.0.2.20, .21, ... (control plane fi
 
 ## Troubleshooting
 - **`Unrecognized capability ... namespace = http://www.vmware.com/storage/tag`** when creating the storage policy:
-  vCenter's storage policy service (sps) doesn't pick up a tag category created through the API, and waiting
-  doesn't help. Stage 1 stops with this instruction: in the vSphere Client, open Tags & Custom Attributes →
-  Categories → `<cluster>-k8s-storage` → Edit, set "Tags per object" to "Many tags" and save. Then re-run
-  `01-vcenter-bootstrap.yml`. It's a one-time manual step per category.
+  vCenter's storage policy service (sps) only offers tag categories whose associable types are stored as
+  `urn:vim25:Datastore`/`urn:vim25:StoragePod`. Stage 1 writes the category that way through the REST API, and
+  re-qualifies an existing one, so re-running `01-vcenter-bootstrap.yml --tags storage_policy` fixes it.
+  Categories created with the bare names (govc, `vmware.vmware.tag_categories`, other tools) have this problem.
+  Saving such a category once in the vSphere Client also fixes it.
 - **`Permission to perform this operation was denied`** in stage 2: first run
   `playbooks/vcenter-access.yml --tags verify`. If every grant is present, re-run stage 2 with
   `-e tofu_debug=true` and find the privilege as described in
