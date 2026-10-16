@@ -1,0 +1,49 @@
+---
+# RKE2 deploys Traefik itself (rke2_ingress_controller: traefik, stage 3) as a DaemonSet with hostPort
+# 80/443. This HelmChartConfig turns it into a Deployment behind a MetalLB LoadBalancer service; RKE2's
+# helm-controller merges it into the rke2-traefik release. RKE2 also makes "traefik" the default IngressClass.
+- name: Configure the RKE2 Traefik chart
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: helm.cattle.io/v1
+      kind: HelmChartConfig
+      metadata:
+        name: rke2-traefik
+        namespace: kube-system
+      spec:
+        valuesContent: "{{ traefik_values | to_nice_yaml(indent=2) }}"
+
+- name: Wait for the Traefik deployment
+  kubernetes.core.k8s_info:
+    kind: Deployment
+    name: rke2-traefik
+    namespace: kube-system
+  register: traefik_deploy
+  until: >-
+    traefik_deploy.resources | length > 0 and
+    (traefik_deploy.resources[0].status.availableReplicas | default(0) | int) == traefik_replica_count | int
+  retries: 40
+  delay: 15
+
+- name: Wait for the Traefik LoadBalancer address
+  kubernetes.core.k8s_info:
+    kind: Service
+    name: rke2-traefik
+    namespace: kube-system
+  register: traefik_svc
+  until: >-
+    (traefik_svc.resources[0].status.loadBalancer.ingress | default([])) | length > 0 and
+    (traefik_lb_ip | length == 0 or traefik_svc.resources[0].status.loadBalancer.ingress[0].ip == traefik_lb_ip)
+  retries: 20
+  delay: 10
+
+- name: Show the Traefik address
+  ansible.builtin.debug:
+    msg: "Traefik: {{ traefik_address }} (ports 80/443)"
+  vars:
+    traefik_address: "{{ traefik_svc.resources[0].status.loadBalancer.ingress[0].ip }}"
+
+- name: Smoke test
+  ansible.builtin.import_tasks: smoke_test.yml
+  when: ingress_smoke_test | bool

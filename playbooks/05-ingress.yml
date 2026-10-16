@@ -1,0 +1,16 @@
+---
+# Stage 5 - MetalLB (LoadBalancer services) + RKE2's Traefik exposed through it.
+# Needs rke2_ingress_controller: traefik in stage 3.
+- name: Deploy MetalLB and expose Traefik
+  hosts: localhost
+  gather_facts: false
+  module_defaults:
+    group/kubernetes.core.k8s:
+      kubeconfig: "{{ state_dir }}/kubeconfig"
+    kubernetes.core.helm:
+      kubeconfig: "{{ state_dir }}/kubeconfig"
+  roles:
+    - role: metallb
+      tags: [metallb]
+    - role: traefik
+      tags: [traefik]

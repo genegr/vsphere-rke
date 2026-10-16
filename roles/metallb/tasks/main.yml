@@ -1,0 +1,63 @@
+---
+# MetalLB in L2 mode: LoadBalancer services get an address from metallb_address_pool, announced via ARP
+# with the node's own MAC (no forged transmits / MAC changes needed on the port group).
+- name: Require an address pool
+  ansible.builtin.assert:
+    that: metallb_address_pool | length > 0
+    fail_msg: >-
+      metallb_address_pool is empty. Set it in inventory/group_vars/all/overrides.yml to a free range
+      outside the DHCP scope, e.g. [192.0.2.240-192.0.2.250].
+    quiet: true
+
+# The speaker uses hostNetwork and NET_RAW; label the namespace before the chart creates pods.
+- name: Ensure the MetalLB namespace exists
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: "{{ metallb_namespace }}"
+        labels:
+          pod-security.kubernetes.io/enforce: privileged
+          pod-security.kubernetes.io/audit: privileged
+          pod-security.kubernetes.io/warn: privileged
+
+- name: Install the MetalLB chart
+  kubernetes.core.helm:
+    name: metallb
+    chart_repo_url: https://metallb.github.io/metallb
+    chart_ref: metallb
+    chart_version: "{{ metallb_chart_version }}"
+    release_namespace: "{{ metallb_namespace }}"
+    wait: true
+    wait_timeout: 10m
+    values:
+      # frr-k8s is the chart's default BGP backend (an FRR DaemonSet, ~170 MiB per node); L2 mode
+      # doesn't use it, and without it the speaker runs in native mode.
+      frrk8s:
+        enabled: "{{ metallb_frrk8s | bool }}"
+
+# The CRs go through MetalLB's validating webhook, which can lag a few seconds behind the rollout.
+- name: Configure the address pool and L2 advertisement
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      - apiVersion: metallb.io/v1beta1
+        kind: IPAddressPool
+        metadata:
+          name: "{{ cluster_name }}-pool"
+          namespace: "{{ metallb_namespace }}"
+        spec:
+          addresses: "{{ metallb_address_pool }}"
+      - apiVersion: metallb.io/v1beta1
+        kind: L2Advertisement
+        metadata:
+          name: "{{ cluster_name }}-l2"
+          namespace: "{{ metallb_namespace }}"
+        spec:
+          ipAddressPools: ["{{ cluster_name }}-pool"]
+  register: metallb_config
+  until: metallb_config is succeeded
+  retries: 12
+  delay: 10

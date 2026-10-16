@@ -1,6 +1,7 @@
 # vsphere-rke
 
-Ubuntu 24.04 VMs on vSphere (OpenTofu) → RKE2 (Ansible, lablabs.rke2) → vSphere CPI + CSI + SPBM StorageClass.
+Ubuntu 24.04 VMs on vSphere (OpenTofu) → RKE2 (Ansible, lablabs.rke2) → vSphere CPI + CSI + SPBM StorageClass
+→ MetalLB (L2) + RKE2's Traefik on a LoadBalancer IP.
 Operating and debugging procedures: the `vsphere-rke` skill (`.claude/skills/vsphere-rke/SKILL.md`).
 Human docs: `README.md`.
 
@@ -37,7 +38,7 @@ inventory/nodes.generated.yml    written by tofu (local_file) — node name -> I
 inventory/group_vars/all/        main.yml (all settings, generic defaults), overrides.yml (lab values, untracked),
                                  vault.yml (encrypted secrets)
 inventory/group_vars/k8s_cluster.yml   lablabs.rke2 settings
-playbooks/01..04, site.yml, 99-destroy.yml
+playbooks/01..05, site.yml, 99-destroy.yml
 playbooks/vcenter-access.yml     users + roles + folder + permissions only, then verifies effective privileges
 playbooks/tools/govc.yml         govc with vault credentials (admin/prov/csi)
 docs/vcenter-user-profiles.md    minimum vCenter profiles (human-facing matrix)
@@ -45,6 +46,8 @@ roles/vcenter_bootstrap          users, roles (privilege lists in defaults), fol
 roles/nodes                      ssh keypair + tofu apply/destroy + inventory refresh
 roles/node_prep                  identity check, apt upgrade, multipath blacklist, reboot
 roles/vsphere_cpi_csi            CPI (helm) + CSI (manifest) + StorageClass + smoke test
+roles/metallb                    MetalLB chart (no frr-k8s) + IPAddressPool + L2Advertisement
+roles/traefik                    HelmChartConfig for rke2-traefik (Deployment + LoadBalancer IP) + whoami smoke test
 tofu/nodes                       vsphere_virtual_machine for_each over cp/worker map, cloud-init templates
 library/vm_vapp_config.py        removes OVA vApp options from the template VM
 ```
@@ -86,6 +89,14 @@ Lab specifics (jump box, vCenter, SSO domain, datacenter/cluster/datastore names
 - **Tag categories are ACL'd through global permissions.** vpxd-svcs logs a `System.Read` denial roughly every
   5 min for `svc-<cluster>-csi` on every tag category. This is harmless without CSI topology. Only add a global
   read-only permission for the CSI user if topology/zones are enabled.
+- **Traefik comes from RKE2**, not from our own chart: `rke2_ingress_controller: traefik` (stage 3) deploys
+  `rke2-traefik` as a DaemonSet with hostPort 80/443; stage 5's `HelmChartConfig` (same name, `kube-system`) turns it
+  into a Deployment behind a `LoadBalancer` service. In that chart the service type is `service.spec.type`, and
+  `hostPort: null` drops the host ports. Switching the ingress controller in stage 3 makes RKE2 uninstall the
+  other one (ingress-nginx was removed cleanly).
+- **MetalLB 0.16 enables frr-k8s by default** (FRR DaemonSet, ~170 MiB per node, BGP only); `metallb_frrk8s: false`
+  keeps the speaker in native mode, which is all L2 needs. L2 ARP replies use the node's own MAC, so the port
+  group needs no forged transmits / MAC changes.
 - **lablabs.rke2 kubeconfig download** reports `changed` on every run. This is the only accepted non-idempotent task.
 - **SSO password expiry** (90 days by default) breaks both service accounts. Rotate with
   `--tags users -e sso_reset_passwords=true`, then re-run stage 4.

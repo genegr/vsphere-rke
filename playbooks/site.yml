@@ -1,5 +1,5 @@
 ---
-# Full deployment: vCenter bootstrap -> node VMs -> RKE2 -> vSphere CPI/CSI.
+# Full deployment: vCenter bootstrap -> node VMs -> RKE2 -> vSphere CPI/CSI -> MetalLB/Traefik.
 - name: Stage 1 - vCenter bootstrap
   ansible.builtin.import_playbook: 01-vcenter-bootstrap.yml
 
@@ -11,3 +11,6 @@
 
 - name: Stage 4 - vSphere CPI/CSI
   ansible.builtin.import_playbook: 04-vsphere-csi.yml
+
+- name: Stage 5 - MetalLB + Traefik
+  ansible.builtin.import_playbook: 05-ingress.yml

@@ -15,3 +15,7 @@ vsphere_network: VM Network
 # static_gateway: 192.0.2.1
 dns_servers: [192.0.2.53]
 dns_search: [example.com]
+
+# MetalLB L2 pool (outside the DHCP scope) and Traefik's fixed IP from it
+metallb_address_pool: [192.0.2.240-192.0.2.250]
+traefik_lb_ip: 192.0.2.240

@@ -60,6 +60,7 @@ dns_search: [example.com]
 # --- RKE2 --------------------------------------------------------------------
 rke2_version: v1.36.5+rke2r1
 rke2_api_vip: ""                               # "" = first control-plane node IP (no VIP)
+rke2_ingress_controller: traefik               # RKE2-packaged Traefik (version follows rke2_version)
 
 # --- vSphere CPI / CSI --------------------------------------------------------
 cpi_chart_version: 1.36.0                      # latest published vsphere-cpi chart (CPI v1.36 for k8s 1.36)
@@ -75,6 +76,17 @@ storageclass_default: true
 storageclass_reclaim_policy: Delete
 storageclass_fstype: ext4
 csi_smoke_test: false
+
+# --- MetalLB / Traefik (stage 5) ---------------------------------------------
+metallb_chart_version: 0.16.1
+metallb_namespace: metallb-system
+metallb_address_pool: []                       # L2 pool outside the DHCP scope, e.g. [192.0.2.240-192.0.2.250]
+metallb_frrk8s: false                          # FRR (frr-k8s) BGP backend; not needed for L2
+traefik_lb_ip: ""                              # fixed LoadBalancer IP for Traefik from the pool; "" = MetalLB picks
+traefik_replicas: 2                            # capped at the number of nodes
+ingress_smoke_test: false
+ingress_smoke_image: traefik/whoami:v1.11.0
+ingress_smoke_host: whoami.example.com         # Host header used by the smoke test (no DNS needed)
 
 # --- Local paths (inside the toolbox container) ------------------------------
 state_dir: "{{ (inventory_dir ~ '/../.state') | realpath }}"

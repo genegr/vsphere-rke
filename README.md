@@ -1,7 +1,8 @@
 # vsphere-rke
 
 Deploys an **RKE2** Kubernetes cluster on **Ubuntu 24.04 VMs on vSphere**, then the **vSphere CPI and CSI** drivers
-and a StorageClass backed by a tag-based **SPBM storage policy**.
+and a StorageClass backed by a tag-based **SPBM storage policy**, plus **MetalLB** (L2) and RKE2's **Traefik** ingress
+controller on a fixed LoadBalancer IP.
 
 Every tool (OpenTofu, Ansible, govc, Helm, kubectl) runs inside one container image built from this repo.
 The jump box only needs Docker.
@@ -11,7 +12,8 @@ The jump box only needs Docker.
  └─ toolbox container ──► stage 1  Ansible   vCenter bootstrap        (SSO admin)
                          ├► stage 2  OpenTofu  node VMs                 (provisioner account)
                          ├► stage 3  Ansible   OS prep + RKE2           (SSH key)
-                         └► stage 4  Ansible   CPI + CSI + StorageClass (CSI account, stored in-cluster)
+                         ├► stage 4  Ansible   CPI + CSI + StorageClass (CSI account, stored in-cluster)
+                         └► stage 5  Ansible   MetalLB + Traefik        (kubeconfig)
 ```
 
 ## What gets created
@@ -32,10 +34,14 @@ The jump box only needs Docker.
 **Nodes (stage 2):** `control_plane_count` × `<cluster>-cp-NN` and `worker_count` × `<cluster>-wk-NN`, cloned with
 `disk.EnableUUID`, hardware version 21 and cloud-init through guestinfo. DHCP is the default; static IPs are optional.
 
-**Cluster (stages 3–4):**
-- RKE2 (lablabs.rke2 role) with an external cloud provider.
+**Cluster (stages 3–5):**
+- RKE2 (lablabs.rke2 role) with an external cloud provider and its packaged Traefik as ingress controller
+  (`rke2_ingress_controller: traefik`; Traefik's version follows `rke2_version`).
 - The vSphere CPI (Helm chart `vsphere-cpi`) and the vSphere CSI driver (upstream vanilla manifest).
 - The StorageClass `vsphere-csi`, the default class, with `storagepolicyname: <cluster>-csi-policy`.
+- MetalLB (Helm chart, L2 mode, native speaker without FRR) with the pool `<cluster>-pool` from `metallb_address_pool`.
+- Traefik reconfigured through a `HelmChartConfig`: a Deployment behind a `LoadBalancer` service on `traefik_lb_ip`
+  (instead of RKE2's default DaemonSet with host ports 80/443); `traefik` is the default IngressClass.
 
 ## Prerequisites
 - A Linux host with Docker (Compose v2+, buildx) that can reach vCenter, the node network and the internet
@@ -54,7 +60,9 @@ mkdir -p .state/home && chmod 700 .state
 cp inventory/group_vars/all/vault.yml.example inventory/group_vars/all/vault.yml   # edit the values
 docker compose run --rm toolbox ansible-vault encrypt inventory/group_vars/all/vault.yml
 
-# 3. Review inventory/group_vars/all/main.yml (cluster name, datastore, counts, network mode...)
+# 3. Lab values: copy overrides.yml.example to overrides.yml and set vCenter, datacenter, cluster, datastore,
+#    network and the MetalLB pool; review the defaults in main.yml (cluster name, counts, network mode...)
+cp inventory/group_vars/all/overrides.yml.example inventory/group_vars/all/overrides.yml
 
 # 4. Deploy everything
 docker compose run --rm toolbox ansible-playbook playbooks/site.yml --ask-vault-pass
@@ -75,7 +83,8 @@ For unattended runs, put the vault password in `.state/vault-pass` (mode 600) an
 | `playbooks/02-nodes.yml` | `tofu apply` for the node VMs, writes `inventory/nodes.generated.yml` | `-e tofu_debug=true` (vSphere SOAP trace for privilege errors) |
 | `playbooks/03-rke2.yml` | apt upgrade, multipath blacklist, RKE2 | — |
 | `playbooks/04-vsphere-csi.yml` | CPI, CSI, StorageClass | `-e csi_smoke_test=true` (PVC + pod round trip) |
-| `playbooks/site.yml` | 01 → 04 | — |
+| `playbooks/05-ingress.yml` | MetalLB, Traefik on a LoadBalancer IP | `--tags metallb,traefik`; `-e ingress_smoke_test=true` (whoami through an Ingress) |
+| `playbooks/site.yml` | 01 → 05 | — |
 | `playbooks/vcenter-access.yml` | only the SSO users, roles, folder and permissions, then reads the effective privileges back | `--tags verify`; `-e sso_reset_passwords=true` |
 | `playbooks/99-destroy.yml` | `tofu destroy` of the nodes | `-e destroy_volumes=true`, `-e destroy_bootstrap=true` |
 
@@ -104,6 +113,10 @@ The most important:
 | `rke2_api_vip` | `""` | empty means the first server's IP; set a free IP for keepalived HA |
 | `csi_version` / `cpi_chart_version` | `v3.7.4` / `1.36.0` | |
 | `storage_policy_name` / `storageclass_name` | `<cluster>-csi-policy` / `vsphere-csi` | |
+| `rke2_ingress_controller` | `traefik` | RKE2's packaged ingress controller (`ingress-nginx` and `none` also work; stage 5 assumes Traefik) |
+| `metallb_address_pool` | `[]` | **required for stage 5**: free addresses outside the DHCP scope, e.g. `[192.0.2.240-192.0.2.250]` |
+| `traefik_lb_ip` | `""` | Traefik's fixed IP from the pool; empty lets MetalLB pick |
+| `metallb_chart_version` / `metallb_frrk8s` | `0.16.1` / `false` | frr-k8s is only needed for BGP |
 
 Tool versions are pinned in [docker/Dockerfile](docker/Dockerfile) (build ARGs) and
 [docker/requirements.*](docker/). Rebuild the image after changing them.

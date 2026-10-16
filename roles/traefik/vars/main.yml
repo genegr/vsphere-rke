@@ -1,0 +1,17 @@
+---
+traefik_replica_count: "{{ [traefik_replicas | int, groups['k8s_cluster'] | length] | min }}"
+
+# Values merged into RKE2's rke2-traefik chart. hostPort: null removes the chart's 80/443 host ports.
+traefik_values:
+  deployment:
+    kind: Deployment
+    replicas: "{{ traefik_replica_count | int }}"
+  ports:
+    web:
+      hostPort: null
+    websecure:
+      hostPort: null
+  service:
+    spec:
+      type: LoadBalancer
+    annotations: "{{ {'metallb.io/loadBalancerIPs': traefik_lb_ip} if traefik_lb_ip | length > 0 else {} }}"

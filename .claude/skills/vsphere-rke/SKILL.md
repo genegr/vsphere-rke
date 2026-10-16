@@ -29,9 +29,10 @@ cd <repo> && tar --exclude=./.state --exclude=./.git -cf - . \
   | ssh -o BatchMode=yes <jumpbox> 'tar -xf - -C ~/vsphere-rke'
 ```
 tar never deletes files, so after removing or renaming a file in the repo, also `rm` it on the jump box.
-If tar reports "file changed as we read it" (e.g. Claude Code writing under `.claude/`), the piped stream can arrive
-broken ("does not look like a tar archive") and the jump box silently keeps old files. Write the archive to a temp
-file first, then `ssh … 'tar -xf - -C ~/vsphere-rke' < archive.tar`, and grep the jump box for the change.
+Don't put `tar -xf -` and a backgrounded run in the same remote command: in `tar -xf - && … & echo started`
+the `&` backgrounds the whole `&&` chain, the shell gives it `/dev/null` as stdin, tar fails with "does not look
+like a tar archive", the run never starts, and the jump box silently keeps the old files. Sync in its own `ssh`,
+then start long runs with `{ setsid nohup sh -c "…" >/dev/null 2>&1 </dev/null & }`, and grep the jump box for the change.
 
 ## 2. Run things
 Use this prefix for any command. It's non-interactive and reads the vault password from `.state/vault-pass`:
@@ -110,7 +111,9 @@ and `kubectl get csinodes`. Use the smoke test: `04-vsphere-csi.yml -e csi_smoke
 4. `kubectl -n vmware-system-csi get pods`: everything Running. `kubectl get csinodes` lists every node.
    `kubectl get sc` shows `vsphere-csi (default)`.
 5. `04-vsphere-csi.yml -e csi_smoke_test=true`: the PVC is Bound and the pod becomes Ready (needs the storage policy).
-6. Least privilege: stage 2 ran as `svc-<cluster>-prov`, and the CSI secret holds `svc-<cluster>-csi`. Grep the logs
+6. `05-ingress.yml -e ingress_smoke_test=true`: `rke2-traefik` has `EXTERNAL-IP` = `traefik_lb_ip`, and the whoami
+   page comes back through it with the smoke Host header. From the LAN, `http://<traefik_lb_ip>/` answers Traefik's 404.
+7. Least privilege: stage 2 ran as `svc-<cluster>-prov`, and the CSI secret holds `svc-<cluster>-csi`. Grep the logs
    for "administrator" outside stage 1: there must be none.
 
 ## 5. Extending
