@@ -32,6 +32,7 @@
       allow_unverified_ssl: "{{ not vcenter_validate_certs }}"
       datacenter: "{{ vsphere_datacenter }}"
       cluster: "{{ vsphere_cluster }}"
+      host: "{{ vsphere_host }}"
       resource_pool: "{{ vsphere_resource_pool }}"
       datastore: "{{ vsphere_datastore }}"
       network: "{{ vsphere_network }}"

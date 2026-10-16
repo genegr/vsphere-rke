@@ -1,0 +1,17 @@
+---
+# Copy to overrides.yml (git-ignored) and set your lab's values. Ansible loads the files in this
+# directory in name order, so overrides.yml is read after main.yml and wins for every variable it sets.
+
+vcenter_hostname: vcenter.example.com
+sso_domain: vsphere.local
+
+vsphere_datacenter: Datacenter
+vsphere_cluster: Cluster
+vsphere_host: ""                                 # e.g. esxi01.example.com to pin the VMs to one host
+vsphere_datastore: datastore1
+vsphere_network: VM Network
+
+# static_cidr: 192.0.2.0/24
+# static_gateway: 192.0.2.1
+dns_servers: [192.0.2.53]
+dns_search: [example.com]

@@ -9,3 +9,6 @@ inventory/group_vars/all/vault.yml
 **/.terraform.lock.hcl.bak
 *.tfstate
 *.tfstate.*
+# lab-specific settings and notes (templates: overrides.yml.example; CLAUDE.local.md is per workstation)
+inventory/group_vars/all/overrides.yml
+CLAUDE.local.md

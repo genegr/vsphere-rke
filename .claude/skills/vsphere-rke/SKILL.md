@@ -1,6 +1,6 @@
 ---
 name: vsphere-rke
-description: Develop, run, debug and extend the vsphere-rke project (vSphere VMs via OpenTofu + RKE2 + vSphere CPI/CSI via Ansible, all tools in a Docker toolbox on the jump box <jumpbox>). Use for any change to this repo, any deployment/teardown, privilege errors, CSI/CPI problems, or adding tools/variables.
+description: Develop, run, debug and extend the vsphere-rke project (vSphere VMs via OpenTofu + RKE2 + vSphere CPI/CSI via Ansible, all tools in a Docker toolbox on the lab's jump box). Use for any change to this repo, any deployment/teardown, privilege errors, CSI/CPI problems, or adding tools/variables.
 ---
 
 # Working on vsphere-rke
@@ -8,9 +8,12 @@ description: Develop, run, debug and extend the vsphere-rke project (vSphere VMs
 Read `CLAUDE.md` first (hard rules and verified gotchas). This skill is the operating manual.
 
 ## 0. Where things run
-- **Workstation** (Windows, this repo at `C:\path\to\vsphere-rke`): edit files only.
+Lab addresses are in `CLAUDE.local.md` (git-ignored); below, `<jumpbox>` is the jump box's `user@host` and
+`<repo>` the checkout on the workstation.
+- **Workstation** (this repo at `<repo>`): edit files only.
 - **Jump box** `<jumpbox>` (Docker only), checkout at `~/vsphere-rke`. Every tool runs as
   `docker compose run --rm -T … toolbox <cmd>` there. Never install anything on the jump box itself.
+- Lab settings: `inventory/group_vars/all/overrides.yml` (git-ignored, synced from the workstation).
 - Jump-box-only files: `inventory/group_vars/all/vault.yml` (encrypted) and `.state/`, which holds:
   - `vault-pass` (mode 600)
   - `kubeconfig`
@@ -20,12 +23,15 @@ Read `CLAUDE.md` first (hard rules and verified gotchas). This skill is the oper
   Don't overwrite or delete them. Syncing never touches them, because they're excluded.
 
 ## 1. Sync the working tree (workstation → jump box)
-Run from Git Bash on the workstation:
+Run on the workstation (Git Bash on Windows):
 ```bash
-cd /c/path/to/vsphere-rke && tar --exclude=./.state --exclude=./.git -cf - . \
+cd <repo> && tar --exclude=./.state --exclude=./.git -cf - . \
   | ssh -o BatchMode=yes <jumpbox> 'tar -xf - -C ~/vsphere-rke'
 ```
 tar never deletes files, so after removing or renaming a file in the repo, also `rm` it on the jump box.
+If tar reports "file changed as we read it" (e.g. Claude Code writing under `.claude/`), the piped stream can arrive
+broken ("does not look like a tar archive") and the jump box silently keeps old files. Write the archive to a temp
+file first, then `ssh … 'tar -xf - -C ~/vsphere-rke' < archive.tar`, and grep the jump box for the change.
 
 ## 2. Run things
 Use this prefix for any command. It's non-interactive and reads the vault password from `.state/vault-pass`:
@@ -39,7 +45,7 @@ ssh <jumpbox> 'cd ~/vsphere-rke && docker compose run --rm -T \
 | One stage | `ansible-playbook playbooks/0N-*.yml` (with `--tags …` for part of stage 1) |
 | Dry run | append `--check --diff` (tofu tasks plan only) |
 | kubectl / helm | `kubectl get nodes -o wide` (KUBECONFIG is preset) |
-| govc (admin/prov/csi) | `ansible-playbook playbooks/tools/govc.yml -e "govc_args='ls /Datacenter/vm/rke2-01'" [-e govc_as=prov]`. Use `govc_as=prov` to check what the provisioner can actually see |
+| govc (admin/prov/csi) | `ansible-playbook playbooks/tools/govc.yml -e "govc_args='ls /<datacenter>/vm/rke2-01'" [-e govc_as=prov]`. Use `govc_as=prov` to check what the provisioner can actually see |
 | Ad-hoc on nodes | `ansible k8s_cluster -m command -a "uptime"` |
 | SPBM probe | `python3 -I .claude/skills/vsphere-rke/scripts/spbm_tag_categories.py` |
 | Rebuild image | (no toolbox) `docker buildx bake -f compose.yaml --allow=network.host toolbox` |
@@ -60,25 +66,24 @@ First rule out a missing grant with `playbooks/vcenter-access.yml --tags verify`
 `roles/vcenter_bootstrap/defaults/main.yml` and run `playbooks/vcenter-access.yml`. Document it in
 `docs/vcenter-user-profiles.md` and `references/privileges.md`. Repeat until the run succeeds.
 
-**Storage policy "Unrecognized capability … storage/tag".** SPBM hasn't synced the tag category. Run the SPBM probe.
-If the category is missing, ask the user before restarting vCenter services through
-`POST https://<vc>/api/vcenter/services/<svc>?action=restart` (SSO admin session): first `sps`, then
-`vpxd-svcs` followed by `sps`. Re-run `--tags storage_policy` afterwards.
-Root-cause findings on the lab vCenter (2026-10-15, VCSA root shell, read-only + temporary DEBUG logging):
-- `sps.log`: `CapabilityMetadataManagerImpl - Found 5 tag categories` then
-  `Failed to fetch tag category InventoryServiceCategory:<id>` for every category created that day. There is
-  no exception, even at DEBUG.
-- sps serves tag categories from its own internal cache (the invsvc `FindKeyValues` calls in the envoy access
-  log). The category IDs appear in that cache, but their details are never filled in. The datastore tag poller
-  (`DatastoreTagChangePoller`, every 20 s) is healthy. Restarting `sps` and `vpxd-svcs` doesn't repopulate it.
-- That needs a VMware SR. The sps loggers to raise for one are `com.vmware.pbm.capability`,
-  `com.vmware.sps.pbm.impl.TagServiceImpl` and `com.vmware.vim.vmomi.client` in
-  `/usr/lib/vmware-vpx/sps/conf/log4j2.properties`. They hot-reload (`monitorInterval=30`).
-  Back up the file first and restore it afterwards.
-History: on 2026-10-15 neither restart helped on the lab vCenter. SPBM listed only categories that existed before that
-day, including none of a throwaway probe category. That points to SPBM's tag sync itself (sps ↔ tagging,
-e.g. a solution-user or certificate problem), which needs `/var/log/vmware/vmware-sps/sps.log` on the VCSA.
-To prove the CSI path while SPBM is down, use a temporary StorageClass with
+**Storage policy "Unrecognized capability … storage/tag".** SPBM (sps) doesn't know the tag category. Stage 1 stops
+with the fix: ask the user to edit the category once in the vSphere Client ("Tags per object" → "Many tags",
+save), then re-run stage 1. The SPBM probe shows what SPBM knows. Don't wait, retry, or restart services for this.
+Findings (vCenter 8.0.3 build 24022515, 2026-10-16, from vpxd-svcs.log + sps.log over a read-only root shell):
+- **API-created categories:** every category created or edited through the public tagging API (vmware.vmware
+  modules, govc) gets `CapabilityMetadataManagerImpl - Failed to fetch tag category InventoryServiceCategory:<id>`
+  in sps.log. PbmCreate fails until something changes that. A second 8.0.3 lab showed the same message.
+- **Ruled out:** cardinality (SINGLE/MULTIPLE), associable types, tag attachment (attached, unattached, untagged
+  datastore), other categories/tags on the datastore, waiting (30+ min).
+- **Also ruled out, the vSphere Client's own backend API:** vmodl1 `/invsvc/vmomi/sdk`, namespace
+  `inventoryservice` 4.0: `InventoryServiceLogin`, `CreateInventoryServiceCategory`,
+  `CreateInventoryServiceTag`, `UpdateInventoryServiceCategoryDescription`, including a single→multiple change.
+  vpxd-svcs logs these as `vmodl.MoCategory`, the same as GUI edits, and SPBM still doesn't pick them up.
+  The remaining difference is the GUI backend's SAML login (`InventoryServiceSamlLogin`); that hasn't been tested.
+- **What works:** a vSphere Client edit of the category, observed 4 out of 4 times; the policy works within seconds.
+- **History:** in March 2026 the same vCenter created another team's tag-based policy 8 s after an API-created category.
+  So it worked once, and something cached in sps/vpxd-svcs since then differs. Cause unknown.
+To prove the CSI path without SPBM, use a temporary StorageClass with
 `parameters.datastoreurl: ds:///vmfs/volumes/<uuid>/` (`playbooks/tools/govc.yml -e "govc_args='datastore.info <ds>'"`).
 
 **Nodes don't get a providerID / keep the `uninitialized` taint.** Run

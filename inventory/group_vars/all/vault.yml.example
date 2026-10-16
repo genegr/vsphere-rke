@@ -2,6 +2,6 @@
 # Copy to vault.yml and encrypt:
 #   docker compose run --rm toolbox ansible-vault encrypt inventory/group_vars/all/vault.yml
 vault_vcenter_admin_password: "CHANGE_ME"       # administrator@<sso_domain>
-vault_prov_password: "CHANGE_ME-Prov-1!"        # must satisfy the vCenter SSO password policy
+vault_prov_password: "CHANGE_ME-Prov-1!"        # must satisfy the vCenter SSO password policy (default: 8-20 chars)
 vault_csi_password: "CHANGE_ME-Csi-1!"
 vault_rke2_token: "CHANGE_ME-long-random-string"

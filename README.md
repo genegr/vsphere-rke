@@ -82,12 +82,17 @@ For unattended runs, put the vault password in `.state/vault-pass` (mode 600) an
 Every stage is idempotent, so re-running it is safe and is the normal way to converge.
 
 ## Configuration
-All variables live in [inventory/group_vars/all/main.yml](inventory/group_vars/all/main.yml). The most important:
+All variables live in [inventory/group_vars/all/main.yml](inventory/group_vars/all/main.yml) with generic defaults.
+Put your lab's values in `inventory/group_vars/all/overrides.yml` (git-ignored; start from
+[overrides.yml.example](inventory/group_vars/all/overrides.yml.example)). It's loaded after `main.yml`, so it wins.
+The most important:
 
 | Variable | Default | Notes |
 |---|---|---|
 | `cluster_name` | `rke2-01` | prefix for every vCenter object and VM name |
+| `vcenter_hostname` / `sso_domain` | `vcenter.example.com` / `vsphere.local` | logins are `user@<sso_domain>` |
 | `vsphere_datacenter` / `vsphere_cluster` | `Datacenter` / `Cluster` | |
+| `vsphere_host` | `""` | ESXi host the node VMs and template are placed on; empty lets the cluster choose. With DRS this sets the initial placement only |
 | `vsphere_resource_pool` | `""` | empty means the cluster root pool |
 | `vsphere_datastore` | `datastore1` | node VM disks |
 | `csi_datastore` | `= vsphere_datastore` | datastore or datastore cluster targeted by the storage policy |
@@ -107,16 +112,15 @@ Static IPs example:
 ```yaml
 network_mode: static
 static_cidr: 192.0.2.0/24
-static_ip_offset: 20        # nodes get 192.0.2.20, .21, ... (control plane first)
+static_ip_offset: 20          # nodes get 192.0.2.20, .21, ... (control plane first)
 ```
 
 ## Troubleshooting
 - **`Unrecognized capability ... namespace = http://www.vmware.com/storage/tag`** when creating the storage policy:
-  vCenter's storage policy service (sps) hasn't picked up the new tag category yet. The task retries for 20 minutes.
-  If it still fails, restart the `sps` service (and if needed `vpxd-svcs`, then `sps` again) and re-run
-  `01-vcenter-bootstrap.yml --tags storage_policy`. If the category still doesn't show up in
-  `.claude/skills/vsphere-rke/scripts/spbm_tag_categories.py`, SPBM's tag sync is broken on the vCenter: check
-  `/var/log/vmware/vmware-sps/sps.log` on the VCSA.
+  vCenter's storage policy service (sps) doesn't pick up a tag category created through the API, and waiting
+  doesn't help. Stage 1 stops with this instruction: in the vSphere Client, open Tags & Custom Attributes →
+  Categories → `<cluster>-k8s-storage` → Edit, set "Tags per object" to "Many tags" and save. Then re-run
+  `01-vcenter-bootstrap.yml`. It's a one-time manual step per category.
 - **`Permission to perform this operation was denied`** in stage 2: first run
   `playbooks/vcenter-access.yml --tags verify`. If every grant is present, re-run stage 2 with
   `-e tofu_debug=true` and find the privilege as described in
@@ -129,7 +133,7 @@ static_ip_offset: 20        # nodes get 192.0.2.20, .21, ... (control plane firs
 - **SSO passwords expire** (default vCenter policy: 90 days). Rotate the vault values and run
   `01-vcenter-bootstrap.yml --tags users -e sso_reset_passwords=true`, then re-run stage 4 to refresh the
   in-cluster secrets.
-- **Docker and the lab DNS**: the lab resolver `172.17.0.53` lies inside Docker's default bridge
-  `172.17.0.0/16`, so bridged containers can't resolve names. The toolbox therefore builds and runs with
+- **Docker and the lab DNS**: if the lab resolver lies inside Docker's default bridge
+  `172.17.0.0/16`, bridged containers can't resolve names. The toolbox therefore builds and runs with
   host networking. That's why the build uses `docker buildx bake --allow=network.host`; plain
   `docker compose build` refuses the `network.host` entitlement.

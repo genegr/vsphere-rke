@@ -3,11 +3,13 @@
 Run inside the toolbox from the repo root:
     docker compose run --rm -T toolbox python3 -I .claude/skills/vsphere-rke/scripts/spbm_tag_categories.py
 
-Reads vcenter_hostname / sso_domain from inventory/group_vars/all/main.yml and the admin
-password from the vault (via .state/vault-pass), so no secret appears on a command line.
-If a category created by stage 1 is missing here, SPBM has not synced it yet and the
-storage-policy task fails with "Unrecognized capability".
+Reads vcenter_hostname / sso_domain from inventory/group_vars/all/main.yml (overridden by
+overrides.yml when present) and the admin password from the vault (via .state/vault-pass),
+so no secret appears on a command line.
+If a category created by stage 1 is missing here, the storage-policy task fails with
+"Unrecognized capability": edit the category once in the vSphere Client (see the skill).
 """
+import os
 import ssl
 import subprocess
 
@@ -18,6 +20,8 @@ from pyVmomi import SoapStubAdapter, VmomiSupport, pbm
 TAG_NS = "http://www.vmware.com/storage/tag"
 
 settings = yaml.safe_load(open("inventory/group_vars/all/main.yml"))
+if os.path.exists("inventory/group_vars/all/overrides.yml"):
+    settings.update(yaml.safe_load(open("inventory/group_vars/all/overrides.yml")) or {})
 vault = yaml.safe_load(subprocess.run(
     ["ansible-vault", "view", "--vault-password-file", ".state/vault-pass",
      "inventory/group_vars/all/vault.yml"],

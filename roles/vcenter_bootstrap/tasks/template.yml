@@ -50,7 +50,9 @@
         password: "{{ vcenter_admin_password }}"
         validate_certs: "{{ vcenter_validate_certs }}"
         datacenter: "{{ vsphere_datacenter }}"
-        cluster: "{{ vsphere_cluster }}"
+        # mutually exclusive in vmware_deploy_ovf: a pinned host wins over the cluster
+        cluster: "{{ omit if vsphere_host | length > 0 else vsphere_cluster }}"
+        esxi_hostname: "{{ vsphere_host | default(omit, true) }}"
         resource_pool: "{{ vsphere_resource_pool | default('Resources', true) }}"
         datastore: "{{ vsphere_datastore }}"
         folder: "/{{ vsphere_datacenter }}/vm/{{ vm_folder }}"

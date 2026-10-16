@@ -12,7 +12,20 @@ variable "allow_unverified_ssl" {
 
 # --- placement -------------------------------------------------------------------
 variable "datacenter" { type = string }
-variable "cluster" { type = string }
+variable "cluster" {
+  description = "Compute cluster; empty when host is a standalone ESXi host"
+  type        = string
+  default     = ""
+  validation {
+    condition     = var.cluster != "" || var.host != ""
+    error_message = "Set cluster, host, or both."
+  }
+}
+variable "host" {
+  description = "ESXi host to pin the VMs to (initial placement inside a cluster); empty = let the cluster place"
+  type        = string
+  default     = ""
+}
 variable "resource_pool" {
   description = "Resource pool name inside the cluster; empty = cluster root pool"
   type        = string

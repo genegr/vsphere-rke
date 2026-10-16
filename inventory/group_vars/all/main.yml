@@ -1,6 +1,7 @@
 ---
 # =============================================================================
-# Deployment variables. Secrets live in vault.yml (see vault.yml.example).
+# Deployment variables with generic defaults. Lab values go in overrides.yml (git-ignored,
+# see overrides.yml.example); secrets live in vault.yml (see vault.yml.example).
 # =============================================================================
 
 cluster_name: rke2-01
@@ -13,9 +14,10 @@ vcenter_admin_username: "administrator@{{ sso_domain }}"
 vcenter_admin_password: "{{ vault_vcenter_admin_password }}"
 
 vsphere_datacenter: Datacenter
-vsphere_cluster: Cluster
+vsphere_cluster: Cluster                       # "" when vsphere_host is a standalone host
+vsphere_host: ""                               # ESXi host to pin node VMs + template to; "" = cluster places
 vsphere_resource_pool: ""                      # "" = cluster root resource pool
-vsphere_datastore: datastore1   # node VM disks
+vsphere_datastore: datastore1                  # node VM disks
 vsphere_network: VM Network
 vm_folder: "{{ cluster_name }}"                # created under /<dc>/vm
 
@@ -50,9 +52,9 @@ network_mode: dhcp
 # Used only with network_mode: static. Node i gets cidrhost(static_cidr, static_ip_offset + i),
 # control-plane nodes first, then workers.
 static_cidr: 192.0.2.0/24
-static_ip_offset: 0                            # e.g. 20 -> 192.0.2.20 (set to a free range!)
+static_ip_offset: 0                            # set to a free range before using static mode!
 static_gateway: 192.0.2.1
-dns_servers: [172.17.0.53]
+dns_servers: [192.0.2.53]
 dns_search: [example.com]
 
 # --- RKE2 --------------------------------------------------------------------

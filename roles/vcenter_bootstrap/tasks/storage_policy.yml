@@ -2,6 +2,16 @@
 # Tag-based SPBM policy consumed by the vSphere CSI StorageClass.
 # Needs csi_datastore_moid / csi_datastore_list from datastores.yml (all members of a
 # datastore cluster get tagged).
+- name: Look up the storage tag category
+  community.vmware.vmware_category_info:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_admin_username }}"
+    password: "{{ vcenter_admin_password }}"
+    validate_certs: "{{ vcenter_validate_certs }}"
+  register: storage_category_info
+
+# Created SINGLE; an existing category keeps its cardinality, because the one-time
+# vSphere Client edit below switches it to MULTIPLE and the API can't switch it back.
 - name: Ensure the storage tag category exists
   vmware.vmware.tag_categories:
     hostname: "{{ vcenter_hostname }}"
@@ -12,7 +22,10 @@
     tag_categories:
       - name: "{{ storage_tag_category }}"
         description: "Kubernetes datastore selection ({{ cluster_name }})"
-        cardinality: SINGLE
+        cardinality: >-
+          {{ storage_category_info.tag_category_info
+             | selectattr('category_name', 'equalto', storage_tag_category)
+             | map(attribute='category_cardinality') | first | default('SINGLE') }}
         associable_types: [Datastore, StoragePod]
 
 - name: Ensure the storage tag exists
@@ -55,21 +68,36 @@
         category_name: "{{ storage_tag_category }}"
   when: csi_datastore_moid.startswith('group-p')
 
-# SPBM learns about new tag categories asynchronously: right after the category is
-# created the policy call fails with "Unrecognized capability". Retry until it syncs.
-- name: Ensure the tag-based storage policy exists
-  community.vmware.vmware_vm_storage_policy:
-    hostname: "{{ vcenter_hostname }}"
-    username: "{{ vcenter_admin_username }}"
-    password: "{{ vcenter_admin_password }}"
-    validate_certs: "{{ vcenter_validate_certs }}"
-    name: "{{ storage_policy_name }}"
-    description: "{{ cluster_name }} CSI volumes (tag {{ storage_tag_category }}:{{ storage_tag_name }})"
-    tag_category: "{{ storage_tag_category }}"
-    tag_name: "{{ storage_tag_name }}"
-    tag_affinity: true
-    state: present
-  register: storage_policy_result
-  until: storage_policy_result is succeeded
-  retries: 40
-  delay: 30
+# SPBM (sps) does not pick up a tag category created or edited through the API: the policy
+# call fails with "Unrecognized capability" and sps.log shows "Failed to fetch tag category".
+# Waiting does not help; one edit of the category in the vSphere Client does (see the skill).
+- name: Storage policy
+  block:
+    - name: Ensure the tag-based storage policy exists
+      community.vmware.vmware_vm_storage_policy:
+        hostname: "{{ vcenter_hostname }}"
+        username: "{{ vcenter_admin_username }}"
+        password: "{{ vcenter_admin_password }}"
+        validate_certs: "{{ vcenter_validate_certs }}"
+        name: "{{ storage_policy_name }}"
+        description: "{{ cluster_name }} CSI volumes (tag {{ storage_tag_category }}:{{ storage_tag_name }})"
+        tag_category: "{{ storage_tag_category }}"
+        tag_name: "{{ storage_tag_name }}"
+        tag_affinity: true
+        state: present
+      register: storage_policy_result
+      until: storage_policy_result is succeeded
+      retries: 3
+      delay: 10
+  rescue:
+    - name: Stop if SPBM does not know the tag category yet
+      ansible.builtin.fail:
+        msg: >-
+          SPBM does not recognise tag category '{{ storage_tag_category }}' yet. In the vSphere Client open
+          Tags & Custom Attributes > Categories > {{ storage_tag_category }} > Edit, set "Tags per object" to
+          "Many tags", save, then re-run this playbook.
+      when: "'Unrecognized capability' in (ansible_failed_result.msg | default(''))"
+
+    - name: Fail on any other storage policy error
+      ansible.builtin.fail:
+        msg: "{{ ansible_failed_result.msg | default(ansible_failed_result) }}"

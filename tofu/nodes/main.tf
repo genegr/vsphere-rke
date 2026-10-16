@@ -23,7 +23,9 @@ locals {
   prefix_length = var.network_mode == "static" ? split("/", var.static_cidr)[1] : ""
   static_ip     = { for name, n in local.nodes : name => var.network_mode == "static" ? cidrhost(var.static_cidr, var.static_ip_offset + n.index) : "" }
 
-  pool_id = var.resource_pool == "" ? data.vsphere_compute_cluster.cluster.resource_pool_id : data.vsphere_resource_pool.pool[0].id
+  # Explicit resource pool > cluster root pool > standalone host root pool
+  pool_id = (var.resource_pool != "" ? data.vsphere_resource_pool.pool[0].id :
+  var.cluster != "" ? data.vsphere_compute_cluster.cluster[0].resource_pool_id : data.vsphere_host.host[0].resource_pool_id)
 }
 
 data "vsphere_datacenter" "dc" {
@@ -31,7 +33,14 @@ data "vsphere_datacenter" "dc" {
 }
 
 data "vsphere_compute_cluster" "cluster" {
+  count         = var.cluster == "" ? 0 : 1
   name          = var.cluster
+  datacenter_id = data.vsphere_datacenter.dc.id
+}
+
+data "vsphere_host" "host" {
+  count         = var.host == "" ? 0 : 1
+  name          = var.host
   datacenter_id = data.vsphere_datacenter.dc.id
 }
 
@@ -62,6 +71,7 @@ resource "vsphere_virtual_machine" "node" {
   name             = each.key
   folder           = var.folder
   resource_pool_id = local.pool_id
+  host_system_id   = var.host == "" ? null : data.vsphere_host.host[0].id
   datastore_id     = data.vsphere_datastore.ds.id
   annotation       = "RKE2 ${each.value.role} of cluster ${var.cluster_name} (managed by OpenTofu)"
 

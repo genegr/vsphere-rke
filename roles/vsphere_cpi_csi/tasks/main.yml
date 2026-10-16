@@ -92,24 +92,28 @@
     dest: "{{ state_dir }}/manifests/vsphere-csi-driver-{{ csi_version }}.yaml"
     mode: "0644"
 
+# The controller is sized to the control plane inside the applied manifest, so the vsphere-rke
+# field manager owns spec.replicas (a separate patch conflicts on re-apply when it isn't 3).
+# RKE2 labels control-plane nodes "true"; the upstream affinity uses "Exists", so no patch is needed.
+- name: Load the vSphere CSI manifest
+  ansible.builtin.set_fact:
+    csi_manifest_docs: >-
+      {{ lookup('ansible.builtin.file', state_dir ~ '/manifests/vsphere-csi-driver-' ~ csi_version ~ '.yaml')
+         | ansible.builtin.from_yaml_all | select | list }}
+
 - name: Deploy the vSphere CSI driver
+  vars:
+    csi_controller: >-
+      {{ csi_manifest_docs | selectattr('kind', 'equalto', 'Deployment')
+         | selectattr('metadata.name', 'equalto', 'vsphere-csi-controller') | first }}
   kubernetes.core.k8s:
     state: present
-    src: "{{ state_dir }}/manifests/vsphere-csi-driver-{{ csi_version }}.yaml"
+    definition: >-
+      {{ csi_manifest_docs | reject('equalto', csi_controller) | list
+         + [csi_controller | combine({'spec': {'replicas': [control_plane_count | int, 3] | min}}, recursive=True)] }}
     apply: true
     server_side_apply:
       field_manager: vsphere-rke
-
-# RKE2 labels control-plane nodes "true"; the upstream affinity uses "Exists", so no patch is needed.
-- name: Size the CSI controller to the control plane
-  kubernetes.core.k8s:
-    state: patched
-    kind: Deployment
-    name: vsphere-csi-controller
-    namespace: vmware-system-csi
-    definition:
-      spec:
-        replicas: "{{ [control_plane_count | int, 3] | min }}"
 
 - name: Wait for the CSI controller
   kubernetes.core.k8s_info:
